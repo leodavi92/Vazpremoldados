@@ -355,6 +355,36 @@
             accounts: ['Caixa Principal', 'Conta Bancária', 'Reserva Emergência']
         };
 
+        function createEmptyState() {
+            return {
+                config: {
+                    ...INITIAL_STATE.config,
+                    companyName: '',
+                    cnpj: '',
+                    address: '',
+                    phone: '',
+                    logo: '',
+                    showBalance: true,
+                    breakEvenResetDate: null,
+                    categories: INITIAL_STATE.config.categories.slice(),
+                    expenseCategories: INITIAL_STATE.config.expenseCategories.slice(),
+                    incomeCategories: INITIAL_STATE.config.incomeCategories.slice(),
+                    paymentMethods: INITIAL_STATE.config.paymentMethods.slice(),
+                    cardFees: JSON.parse(JSON.stringify(INITIAL_STATE.config.cardFees))
+                },
+                inventory: [],
+                transactions: [],
+                employees: [],
+                clients: [],
+                sales: [],
+                goals: [],
+                production: [],
+                fixedAccounts: [],
+                equipment: [],
+                accounts: ['Caixa Principal']
+            };
+        }
+
         // --- APP STATE ---
         let appState = JSON.parse(localStorage.getItem('financeProData')) || INITIAL_STATE;
         
@@ -5234,8 +5264,8 @@
                                             <i data-lucide="trash-2" class="w-5 h-5"></i>
                                         </div>
                                         <div class="text-left">
-                                            <p class="text-xs font-black text-red-600 uppercase tracking-tight">Limpar Tudo</p>
-                                            <p class="text-[9px] text-red-400 font-bold uppercase">Resetar banco de dados</p>
+                                            <p class="text-xs font-black text-red-600 uppercase tracking-tight">Zerar o App</p>
+                                            <p class="text-[9px] text-red-400 font-bold uppercase">Dados + Login + Tema</p>
                                         </div>
                                     </div>
                                     <i data-lucide="alert-triangle" class="w-4 h-4 text-red-300"></i>
@@ -5449,11 +5479,37 @@
             reader.readAsText(file);
         }
 
-        function clearData() {
-            if (confirm('ATENÇÃO: Isso apagará todos os seus dados permanentemente. Continuar?')) {
-                localStorage.removeItem('financeProData');
-                location.reload();
+        async function clearData() {
+            const ok = confirm('ATENÇÃO: Isso vai ZERAR o app (dados, login e tema) permanentemente. Continuar?');
+            if (!ok) return;
+
+            try {
+                localStorage.clear();
+            } catch (_) {
             }
+
+            try {
+                localStorage.setItem('financeProData', JSON.stringify(createEmptyState()));
+            } catch (_) {
+            }
+
+            try {
+                if ('caches' in window) {
+                    const cacheKeys = await caches.keys();
+                    await Promise.all(cacheKeys.map((k) => caches.delete(k)));
+                }
+            } catch (_) {
+            }
+
+            try {
+                if ('serviceWorker' in navigator) {
+                    const regs = await navigator.serviceWorker.getRegistrations();
+                    await Promise.all(regs.map((r) => r.unregister()));
+                }
+            } catch (_) {
+            }
+
+            window.location.replace(window.location.pathname + '?r=' + Date.now());
         }
 
         // --- APP INITIALIZATION ---
