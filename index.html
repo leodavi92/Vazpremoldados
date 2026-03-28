@@ -5,7 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gestão Financeira Pro</title>
     <meta name="theme-color" content="#0ea5e9">
-    <link rel="manifest" href="manifest.webmanifest">
+    <script>
+        if (location.protocol !== 'file:') {
+            const link = document.createElement('link');
+            link.rel = 'manifest';
+            link.href = 'manifest.webmanifest';
+            document.head.appendChild(link);
+        }
+    </script>
     <link rel="icon" href="app-icon.svg" type="image/svg+xml">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -157,7 +164,7 @@
                 </button>
             </form>
             <div class="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700 text-center">
-                <p class="text-xs text-slate-400">Dica: Use <b>admin@empresa.com</b> / <b>123456</b></p>
+                <p id="login-hint" class="text-xs text-slate-400"></p>
             </div>
         </div>
     </div>
@@ -252,7 +259,9 @@
                             <p class="text-sm font-semibold dark:text-white" id="user-display-name">Admin</p>
                             <p class="text-xs text-slate-500 dark:text-slate-400" id="user-display-role">Administrador</p>
                         </div>
-                        <img id="user-avatar" src="https://ui-avatars.com/api/?name=Admin&background=0ea5e9&color=fff" alt="Perfil" class="w-10 h-10 rounded-full border-2 border-primary-100 dark:border-slate-600">
+                        <button type="button" onclick="openProfileModal()" class="rounded-full focus:outline-none focus:ring-2 focus:ring-primary-500/40">
+                            <img id="user-avatar" src="https://ui-avatars.com/api/?name=Admin&background=0ea5e9&color=fff" alt="Perfil" class="w-10 h-10 rounded-full border-2 border-primary-100 dark:border-slate-600">
+                        </button>
                     </div>
                 </div>
             </header>
@@ -284,8 +293,18 @@
                 companyName: 'Fábrica de Pré-moldados Pro',
                 cnpj: '00.000.000/0001-00',
                 address: 'Área Industrial, Lote 10 - Distrito Industrial',
+                addressStreet: '',
+                addressNumber: '',
+                addressNeighborhood: '',
+                addressCity: '',
+                addressState: '',
+                addressCEP: '',
                 phone: '(11) 98888-7777',
                 logo: '',
+                showBalance: false,
+                loginEmail: 'admin@empresa.com',
+                loginPassword: '123456',
+                loginHintText: 'Entre com o acesso configurado pela empresa.',
                 categories: ['Matéria-Prima', 'Ferragens', 'Produtos Acabados', 'Insumos / Aditivos', 'Equipamentos / EPIs', 'Manutenção', 'Outros'],
                 expenseCategories: ['Compra de Matéria-Prima', 'Compra de Ferragens', 'Manutenção de Máquinas', 'Energia Elétrica', 'Salários / Encargos', 'Impostos', 'Fretes / Combustível', 'Taxas de Cartão'],
                 incomeCategories: ['Venda de Pré-moldados', 'Serviços de Instalação', 'Venda de Sucata', 'Outros'],
@@ -362,10 +381,19 @@
                     companyName: '',
                     cnpj: '',
                     address: '',
+                    addressStreet: '',
+                    addressNumber: '',
+                    addressNeighborhood: '',
+                    addressCity: '',
+                    addressState: '',
+                    addressCEP: '',
                     phone: '',
                     logo: '',
-                    showBalance: true,
+                    showBalance: false,
                     breakEvenResetDate: null,
+                    loginEmail: INITIAL_STATE.config.loginEmail,
+                    loginPassword: INITIAL_STATE.config.loginPassword,
+                    loginHintText: INITIAL_STATE.config.loginHintText,
                     categories: INITIAL_STATE.config.categories.slice(),
                     expenseCategories: INITIAL_STATE.config.expenseCategories.slice(),
                     incomeCategories: INITIAL_STATE.config.incomeCategories.slice(),
@@ -386,12 +414,39 @@
         }
 
         // --- APP STATE ---
-        let appState = JSON.parse(localStorage.getItem('financeProData')) || INITIAL_STATE;
+        let appState = INITIAL_STATE;
+        try {
+            const raw = localStorage.getItem('financeProData');
+            if (raw) appState = JSON.parse(raw);
+        } catch (_) {
+            appState = INITIAL_STATE;
+        }
+        if (!appState || typeof appState !== 'object') appState = INITIAL_STATE;
         
         // Ensure config and fields exist
         if (!appState.config) appState.config = { ...INITIAL_STATE.config };
-        if (appState.config.showBalance === undefined) appState.config.showBalance = true;
+        if (appState.config.showBalance === undefined) appState.config.showBalance = false;
+        appState.config.showBalance = false;
         if (appState.config.breakEvenResetDate === undefined) appState.config.breakEvenResetDate = null;
+        if (appState.config.addressStreet === undefined) appState.config.addressStreet = '';
+        if (appState.config.addressNumber === undefined) appState.config.addressNumber = '';
+        if (appState.config.addressNeighborhood === undefined) appState.config.addressNeighborhood = '';
+        if (appState.config.addressCity === undefined) appState.config.addressCity = '';
+        if (appState.config.addressState === undefined) appState.config.addressState = '';
+        if (appState.config.addressCEP === undefined) appState.config.addressCEP = '';
+        if (appState.config.loginEmail === undefined) appState.config.loginEmail = INITIAL_STATE.config.loginEmail;
+        if (appState.config.loginPassword === undefined) appState.config.loginPassword = INITIAL_STATE.config.loginPassword;
+        if (appState.config.loginHintText === undefined) appState.config.loginHintText = INITIAL_STATE.config.loginHintText;
+        if (!Array.isArray(appState.inventory)) appState.inventory = [];
+        if (!Array.isArray(appState.transactions)) appState.transactions = [];
+        if (!Array.isArray(appState.employees)) appState.employees = [];
+        if (!Array.isArray(appState.clients)) appState.clients = [];
+        if (!Array.isArray(appState.sales)) appState.sales = [];
+        if (!Array.isArray(appState.goals)) appState.goals = [];
+        if (!Array.isArray(appState.production)) appState.production = [];
+        if (!Array.isArray(appState.fixedAccounts)) appState.fixedAccounts = [];
+        if (!Array.isArray(appState.equipment)) appState.equipment = [];
+        if (!Array.isArray(appState.accounts)) appState.accounts = ['Caixa Principal'];
         
         // MIGRATION: Force update categories to ensure user sees the new factory categories
         appState.config.categories = INITIAL_STATE.config.categories;
@@ -418,9 +473,8 @@
                 ]
             };
         }
-        if (!appState.production) appState.production = [];
-        if (!appState.fixedAccounts) appState.fixedAccounts = INITIAL_STATE.fixedAccounts;
-        if (!appState.equipment) appState.equipment = INITIAL_STATE.equipment;
+        if (!appState.fixedAccounts.length && Array.isArray(INITIAL_STATE.fixedAccounts)) appState.fixedAccounts = INITIAL_STATE.fixedAccounts;
+        if (!appState.equipment.length && Array.isArray(INITIAL_STATE.equipment)) appState.equipment = INITIAL_STATE.equipment;
         
         // Ensure employees have new fields
         appState.employees.forEach(emp => {
@@ -433,7 +487,17 @@
             if (p.type === 'final' && p.helperFee === undefined) p.helperFee = 0;
         });
 
-        let currentUser = JSON.parse(localStorage.getItem('financeProUser')) || null;
+        let currentUser = null;
+        try {
+            const rawUser = localStorage.getItem('financeProUser');
+            if (rawUser) currentUser = JSON.parse(rawUser);
+        } catch (_) {
+            try {
+                localStorage.removeItem('financeProUser');
+            } catch (_) {
+            }
+            currentUser = null;
+        }
         let currentTab = 'dashboard';
         let dashboardSubTab = 'geral';
         let vendasSubTab = 'home';
@@ -448,9 +512,35 @@
             const date = new Date(dateStr);
             return date.toLocaleDateString('pt-BR');
         };
+        function composeCompanyAddress(cfg) {
+            const parts = [];
+            let first = '';
+            if (cfg.addressStreet) {
+                first = cfg.addressStreet;
+                if (cfg.addressNumber) first += ', ' + cfg.addressNumber;
+            }
+            if (first) parts.push(first);
+            if (cfg.addressNeighborhood) parts.push(cfg.addressNeighborhood);
+            let cityState = '';
+            if (cfg.addressCity) cityState = cfg.addressCity;
+            if (cfg.addressState) cityState = cityState ? (cityState + ' - ' + cfg.addressState) : cfg.addressState;
+            if (cityState) parts.push(cityState);
+            if (cfg.addressCEP) parts.push(cfg.addressCEP);
+            return parts.join(' • ');
+        }
 
         function saveData() {
-            localStorage.setItem('financeProData', JSON.stringify(appState));
+            try {
+                localStorage.setItem('financeProData', JSON.stringify(appState));
+            } catch (_) {
+                const loginScreen = document.getElementById('login-screen');
+                const isOnLogin = loginScreen && !loginScreen.classList.contains('hidden');
+                if (isOnLogin) {
+                    setLoginError('Armazenamento do navegador bloqueado. Use “Reparar Acesso” ou abra no Chrome fora do modo anônimo.');
+                } else {
+                    showToast('Armazenamento do navegador bloqueado. Alguns dados podem não ser salvos.', 'error');
+                }
+            }
         }
 
         function showToast(message, type = 'success') {
@@ -463,7 +553,10 @@
             toast.innerHTML = `<i data-lucide="${icon}" class="w-5 h-5"></i> <span class="font-medium">${message}</span>`;
             
             container.appendChild(toast);
-            lucide.createIcons();
+            try {
+                lucide.createIcons();
+            } catch (_) {
+            }
             
             setTimeout(() => {
                 toast.style.opacity = '0';
@@ -473,21 +566,78 @@
             }, 3000);
         }
 
+        function setLoginError(message) {
+            const el = document.getElementById('login-error');
+            if (!el) return;
+            if (message) {
+                el.innerText = String(message);
+                el.classList.remove('hidden');
+            } else {
+                el.innerText = '';
+                el.classList.add('hidden');
+            }
+        }
+
+        window.addEventListener('error', (e) => {
+            setLoginError('Erro no app: ' + (e?.message || 'verifique sua conexão e recarregue.'));
+        });
+        window.addEventListener('unhandledrejection', (e) => {
+            const reason = e?.reason;
+            const msg = reason?.message || reason || 'verifique sua conexão e recarregue.';
+            setLoginError('Erro no app: ' + msg);
+        });
+
+        function updateLoginHint() {
+            const el = document.getElementById('login-hint');
+            if (!el) return;
+            const txt = (appState?.config?.loginHintText || '').trim();
+            el.innerText = txt || '';
+        }
+        updateLoginHint();
+
         // --- AUTH ---
         const loginForm = document.getElementById('login-form');
         loginForm.onsubmit = (e) => {
             e.preventDefault();
-            const email = document.getElementById('login-email').value;
-            const password = document.getElementById('login-password').value;
-            
-            const user = DEMO_USERS.find(u => u.email === email && u.password === password);
-            if (user) {
-                currentUser = user;
-                localStorage.setItem('financeProUser', JSON.stringify(user));
-                initApp();
-                showToast(`Bem-vindo, ${user.name}!`);
-            } else {
-                showToast('E-mail ou senha incorretos.', 'error');
+            setLoginError('');
+            try {
+                const email = (document.getElementById('login-email').value || '').trim().toLowerCase();
+                const password = (document.getElementById('login-password').value || '').trim();
+                
+                let user = null;
+                const confEmail = String(appState?.config?.loginEmail || '').trim().toLowerCase();
+                const confPass = String(appState?.config?.loginPassword || '').trim();
+                if (confEmail && confPass) {
+                    if (email === confEmail && password === confPass) {
+                        user = {
+                            email: appState.config.loginEmail,
+                            password: appState.config.loginPassword,
+                            name: 'Admin',
+                            role: 'Administrador',
+                            avatar: 'https://ui-avatars.com/api/?name=Admin&background=0ea5e9&color=fff'
+                        };
+                    }
+                } else {
+                    user = DEMO_USERS.find(u => String(u.email).toLowerCase() === email && u.password === password) || null;
+                }
+                if (user) {
+                    currentUser = user;
+                    try {
+                        localStorage.setItem('financeProUser', JSON.stringify(user));
+                    } catch (_) {
+                    }
+                    try {
+                        initApp();
+                    } catch (err) {
+                        setLoginError('Falha ao iniciar o app. Recarregue a página.');
+                        return;
+                    }
+                    showToast(`Bem-vindo, ${user.name}!`);
+                } else {
+                    showToast('E-mail ou senha incorretos.', 'error');
+                }
+            } catch (err) {
+                showToast('Erro ao entrar. Recarregue a página.', 'error');
             }
         };
 
@@ -496,36 +646,142 @@
             localStorage.removeItem('financeProUser');
             document.getElementById('main-app').classList.add('hidden');
             document.getElementById('login-screen').classList.remove('hidden');
+            updateLoginHint();
+        }
+        
+        function openProfileModal() {
+            const name = currentUser?.name || 'Usuário';
+            const role = currentUser?.role || '';
+            const email = currentUser?.email || '';
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-black dark:text-white uppercase tracking-tight">Meu Perfil</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <div class="space-y-6">
+                        <!-- User Info Card -->
+                        <div class="p-5 bg-slate-50 dark:bg-slate-700/50 rounded-3xl border border-slate-100 dark:border-slate-700 flex items-center gap-4">
+                            <div class="relative">
+                                <img src="${currentUser?.avatar || 'https://ui-avatars.com/api/?name=User&background=0ea5e9&color=fff'}" class="w-16 h-16 rounded-2xl border-2 border-white dark:border-slate-600 shadow-sm" alt="Avatar">
+                                <div class="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white dark:border-slate-800 rounded-full"></div>
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-base font-black text-slate-900 dark:text-white uppercase tracking-tight truncate" id="profile-display-name">${name}</p>
+                                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-widest truncate">${role}</p>
+                                <p class="text-xs text-slate-400 truncate">${email}</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Edit Name Section -->
+                        <div class="space-y-3">
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Editar Nome de Exibição</label>
+                            <div class="relative">
+                                <i data-lucide="user" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                                <input type="text" id="edit-profile-name" value="${name}" 
+                                    class="w-full pl-11 pr-4 py-3.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm shadow-sm transition-all">
+                            </div>
+                            <button onclick="saveProfileName()" class="w-full py-3.5 bg-primary-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-primary-700 shadow-lg shadow-primary-500/20 transition-all active:scale-[0.98]">
+                                Atualizar Nome
+                            </button>
+                        </div>
+
+                        <!-- Logout Area -->
+                        <div class="pt-4 border-t border-slate-100 dark:border-slate-700">
+                            <button onclick="closeModal(); logout();" class="w-full py-3.5 bg-red-50 text-red-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-all flex items-center justify-center gap-2">
+                                <i data-lucide="log-out" class="w-4 h-4"></i>
+                                Encerrar Sessão
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            openModal(html);
         }
 
         // --- UI CORE ---
         function toggleDarkMode() {
             document.documentElement.classList.toggle('dark');
             const isDark = document.documentElement.classList.contains('dark');
-            localStorage.setItem('financeProTheme', isDark ? 'dark' : 'light');
+            try {
+                localStorage.setItem('financeProTheme', isDark ? 'dark' : 'light');
+            } catch (_) {
+            }
             document.getElementById('sun-icon').classList.toggle('hidden', !isDark);
             document.getElementById('moon-icon').classList.toggle('hidden', isDark);
         }
 
         function switchTab(tabId) {
-            currentTab = tabId;
-            if (tabId === 'vendas') {
-                vendasSubTab = 'home';
-            }
-            document.querySelectorAll('.sidebar-item').forEach(btn => {
-                btn.classList.remove('sidebar-item-active');
-                btn.classList.add('hover:bg-slate-100', 'dark:hover:bg-slate-700');
-            });
-            document.getElementById(`btn-${tabId}`).classList.add('sidebar-item-active');
-            document.getElementById(`btn-${tabId}`).classList.remove('hover:bg-slate-100', 'dark:hover:bg-slate-700');
-            
-            // Fechar sidebar automaticamente no mobile ao clicar em um item
-            if (window.innerWidth < 768) {
-                const sidebar = document.getElementById('sidebar');
-                sidebar.classList.add('-translate-x-full');
-            }
+            try {
+                currentTab = tabId;
+                if (tabId === 'config') {
+                    configTab = 'menu';
+                }
+                if (tabId === 'vendas') {
+                    vendasSubTab = 'home';
+                }
+                document.querySelectorAll('.sidebar-item').forEach(btn => {
+                    btn.classList.remove('sidebar-item-active');
+                    btn.classList.add('hover:bg-slate-100', 'dark:hover:bg-slate-700');
+                });
+                const btn = document.getElementById(`btn-${tabId}`);
+                if (btn) {
+                    btn.classList.add('sidebar-item-active');
+                    btn.classList.remove('hover:bg-slate-100', 'dark:hover:bg-slate-700');
+                }
+                
+                if (window.innerWidth < 768) {
+                    const sidebar = document.getElementById('sidebar');
+                    if (sidebar) sidebar.classList.add('-translate-x-full');
+                }
 
-            renderContent();
+                renderContent();
+            } catch (err) {
+                setLoginError('Erro ao abrir a tela.');
+                showToast('Erro ao abrir a tela.', 'error');
+                console.error(err);
+            }
+        }
+
+        function togglePasswordVisibility(id) {
+            const input = document.getElementById(id);
+            const icon = document.getElementById(`eye-${id}`);
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.setAttribute('data-lucide', 'eye-off');
+            } else {
+                input.type = 'password';
+                icon.setAttribute('data-lucide', 'eye');
+            }
+            try {
+                lucide.createIcons();
+            } catch (_) {}
+        }
+
+        function saveProfileName() {
+            const nameInput = document.getElementById('edit-profile-name');
+            const newName = (nameInput?.value || '').trim();
+            if (!newName) {
+                showToast('O nome não pode estar vazio.', 'error');
+                return;
+            }
+            currentUser.name = newName;
+            currentUser.avatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(newName)}&background=0ea5e9&color=fff`;
+            localStorage.setItem('financeProUser', JSON.stringify(currentUser));
+            
+            // Update UI
+            const userDisplayName = document.getElementById('user-display-name');
+            const userAvatar = document.getElementById('user-avatar');
+            const profileDisplayName = document.getElementById('profile-display-name');
+            
+            if (userDisplayName) userDisplayName.innerText = newName;
+            if (userAvatar) userAvatar.src = currentUser.avatar;
+            if (profileDisplayName) profileDisplayName.innerText = newName;
+            
+            showToast('Nome atualizado com sucesso!');
         }
 
         function switchDashboardTab(subTabId) {
@@ -536,6 +792,28 @@
         function toggleBalanceVisibility() {
             appState.config.showBalance = !appState.config.showBalance;
             saveData();
+            if (currentTab === 'dashboard') {
+                const now = new Date();
+                const todayStr = now.toISOString().split('T')[0];
+                const currentMonth = todayStr.substring(0, 7);
+                const balance = appState.transactions.reduce((acc, t) => acc + (t.type === 'entrada' ? t.amount : -t.amount), 0);
+                const monthlyIn = appState.transactions.filter(t => t.type === 'entrada' && t.date.startsWith(currentMonth)).reduce((acc, t) => acc + t.amount, 0);
+                const monthlyOut = appState.transactions.filter(t => t.type === 'saida' && t.date.startsWith(currentMonth)).reduce((acc, t) => acc + t.amount, 0);
+
+                const show = !!appState.config.showBalance;
+                const elBalance = document.getElementById('dash-balance-value');
+                const elIn = document.getElementById('dash-monthly-in');
+                const elOut = document.getElementById('dash-monthly-out');
+                const elOpen = document.getElementById('dash-eye-open');
+                const elClosed = document.getElementById('dash-eye-closed');
+
+                if (elBalance) elBalance.innerText = show ? formatCurrency(balance) : '••••••';
+                if (elIn) elIn.innerText = show ? formatCurrency(monthlyIn) : '••••••';
+                if (elOut) elOut.innerText = show ? formatCurrency(monthlyOut) : '••••••';
+                if (elOpen) elOpen.classList.toggle('hidden', !show);
+                if (elClosed) elClosed.classList.toggle('hidden', show);
+                return;
+            }
             renderDashboard();
         }
 
@@ -546,11 +824,42 @@
 
         function resetBreakEven() {
             if (confirm('Deseja iniciar um NOVO CICLO para o Ponto de Equilíbrio? Isso definirá a data de hoje como o novo ponto de partida para o cálculo de metas e cobertura de custos.')) {
-                appState.config.breakEvenResetDate = new Date().toISOString().split('T')[0];
-                saveData();
-                showToast('Novo ciclo de equilíbrio iniciado!');
-                renderDashboard();
+                resetBreakEvenNow();
             }
+        }
+
+        function resetBreakEvenNow() {
+            appState.config.breakEvenResetDate = new Date().toISOString().split('T')[0];
+            saveData();
+            showToast('Novo ciclo de equilíbrio iniciado!');
+            if (currentTab === 'dashboard') renderDashboard();
+            if (currentTab === 'metas') renderMetas();
+        }
+
+        function confirmResetBreakEven() {
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-black dark:text-white uppercase tracking-tight">Reiniciar Ciclo</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                        <p class="text-sm font-bold text-slate-700 dark:text-slate-200">Tem certeza que deseja reiniciar o ciclo?</p>
+                        <p class="text-xs text-slate-500 mt-1">Isso define a data de hoje como o novo início do ciclo de 30 dias.</p>
+                    </div>
+                    <div class="mt-6 flex gap-3">
+                        <button onclick="closeModal()" class="flex-1 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-all">
+                            Cancelar
+                        </button>
+                        <button onclick="resetBreakEvenNow(); closeModal();" class="flex-1 py-3 bg-red-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:brightness-95 transition-all">
+                            Confirmar
+                        </button>
+                    </div>
+                </div>
+            `;
+            openModal(html);
         }
 
         // --- MODAL SYSTEM ---
@@ -561,7 +870,10 @@
             modalContent.innerHTML = html;
             modalBackdrop.classList.remove('hidden');
             modalBackdrop.classList.add('flex');
-            lucide.createIcons();
+            try {
+                lucide.createIcons();
+            } catch (_) {
+            }
         }
 
         function closeModal() {
@@ -682,7 +994,10 @@
                 </div>
             `;
             document.getElementById('content-area').innerHTML = html;
-            lucide.createIcons();
+            try {
+                lucide.createIcons();
+            } catch (_) {
+            }
             filterProduction();
         }
 
@@ -874,6 +1189,14 @@
                 return Math.ceil((next - new Date()) / (1000 * 60 * 60 * 24)) <= 7;
             });
 
+            // Contas Fixas Urgentes (Atrasadas ou Próximas) para o badge
+            const todayDay = new Date().getDate();
+            const urgentFixedAccounts = appState.fixedAccounts.filter(acc => {
+                const isPaid = appState.transactions.some(t => t.description.includes(acc.description) && t.date.startsWith(currentMonth));
+                if (isPaid) return false;
+                return acc.dueDay < todayDay || (acc.dueDay >= todayDay && acc.dueDay <= todayDay + 5);
+            });
+
             const showBalance = appState.config.showBalance;
 
             let html = `
@@ -883,11 +1206,12 @@
                         <div class="min-w-0 flex-1">
                             <p class="text-primary-100 text-xs font-medium mb-1">Saldo em Caixa</p>
                             <div class="flex items-center gap-2 sm:gap-3">
-                                <h2 class="text-xl sm:text-3xl font-black tracking-tight truncate">
+                                <h2 id="dash-balance-value" class="text-xl sm:text-3xl font-black tracking-tight truncate">
                                     ${showBalance ? formatCurrency(balance) : '••••••'}
                                 </h2>
-                                <button onclick="toggleBalanceVisibility()" class="p-1.5 sm:p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all shrink-0">
-                                    <i data-lucide="${showBalance ? 'eye-off' : 'eye'}" class="w-4 h-4 sm:w-5 h-5"></i>
+                                <button onclick="toggleBalanceVisibility()" class="p-1.5 sm:p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all shrink-0" aria-label="Alternar visibilidade">
+                                    <i id="dash-eye-open" data-lucide="eye" class="w-4 h-4 sm:w-5 h-5 ${showBalance ? '' : 'hidden'}"></i>
+                                    <i id="dash-eye-closed" data-lucide="eye-off" class="w-4 h-4 sm:w-5 h-5 ${showBalance ? 'hidden' : ''}"></i>
                                 </button>
                             </div>
                         </div>
@@ -899,11 +1223,11 @@
                     <div class="grid grid-cols-2 gap-3 sm:gap-4">
                         <div class="bg-white/10 p-3 sm:p-4 rounded-2xl min-w-0">
                             <p class="text-primary-100 text-[8px] sm:text-[10px] uppercase font-bold tracking-widest mb-1 truncate">Entradas (Mês)</p>
-                            <p class="text-sm sm:text-lg font-bold truncate">${showBalance ? formatCurrency(monthlyIn) : '••••••'}</p>
+                            <p id="dash-monthly-in" class="text-sm sm:text-lg font-bold truncate">${showBalance ? formatCurrency(monthlyIn) : '••••••'}</p>
                         </div>
                         <div class="bg-white/10 p-3 sm:p-4 rounded-2xl min-w-0">
                             <p class="text-primary-100 text-[8px] sm:text-[10px] uppercase font-bold tracking-widest mb-1 truncate">Saídas (Mês)</p>
-                            <p class="text-sm sm:text-lg font-bold text-red-200 truncate">${showBalance ? formatCurrency(actualExpensesHeader) : '••••••'}</p>
+                            <p id="dash-monthly-out" class="text-sm sm:text-lg font-bold text-red-200 truncate">${showBalance ? formatCurrency(actualExpensesHeader) : '••••••'}</p>
                         </div>
                     </div>
                 </div>
@@ -911,6 +1235,12 @@
                 <!-- Quick Actions Grid -->
                 <div class="mb-8 overflow-x-auto pb-2 -mx-2 px-2 custom-scrollbar">
                     <div class="flex gap-4 min-w-max">
+                        <button onclick="switchTab('clientes')" class="flex flex-col items-center gap-2 group">
+                            <div class="w-14 h-14 bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700 rounded-2xl flex items-center justify-center text-indigo-600 group-active:scale-95 transition-all">
+                                <i data-lucide="user-plus" class="w-6 h-6"></i>
+                            </div>
+                            <span class="text-xs font-bold text-slate-600 dark:text-slate-400">Clientes</span>
+                        </button>
                         <button onclick="switchTab('vendas')" class="flex flex-col items-center gap-2 group">
                             <div class="w-14 h-14 bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700 rounded-2xl flex items-center justify-center text-primary-600 group-active:scale-95 transition-all">
                                 <i data-lucide="shopping-cart" class="w-6 h-6"></i>
@@ -949,7 +1279,7 @@
                     <button onclick="switchDashboardTab('geral')" class="flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${dashboardSubTab === 'geral' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary-600 dark:text-white' : 'text-slate-500'}">Geral</button>
                     <button onclick="switchDashboardTab('financeiro')" class="flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${dashboardSubTab === 'financeiro' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary-600 dark:text-white' : 'text-slate-500'}">Finanças</button>
                     <button onclick="switchDashboardTab('alertas')" class="flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${dashboardSubTab === 'alertas' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary-600 dark:text-white' : 'text-slate-500'}">
-                        Avisos ${lowStockItems.length + urgentEquipment.length > 0 ? `<span class="ml-1 px-1.5 py-0.5 bg-red-500 text-white text-[9px] rounded-full">${lowStockItems.length + urgentEquipment.length}</span>` : ''}
+                        Avisos ${lowStockItems.length + urgentEquipment.length + urgentFixedAccounts.length > 0 ? `<span class="ml-1 px-1.5 py-0.5 bg-red-500 text-white text-[9px] rounded-full">${lowStockItems.length + urgentEquipment.length + urgentFixedAccounts.length}</span>` : ''}
                     </button>
                 </div>
 
@@ -959,7 +1289,10 @@
             `;
             
             document.getElementById('content-area').innerHTML = html;
-            lucide.createIcons();
+            try {
+                lucide.createIcons();
+            } catch (_) {
+            }
             if (dashboardSubTab === 'geral' || dashboardSubTab === 'financeiro') {
                 setTimeout(initDashboardCharts, 100); // Pequeno delay para garantir que o DOM está pronto
             }
@@ -971,8 +1304,17 @@
             const currentMonth = todayStr.substring(0, 7);
             
             // LÓGICA DE DATA DE RESET (Ponto de Equilíbrio)
-            const resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
-            const resetDate = new Date(resetDateStr);
+            let resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
+            let resetDate = new Date(resetDateStr);
+            const todayDate = new Date(todayStr);
+            let daysElapsed = Math.floor((todayDate - resetDate) / (1000 * 60 * 60 * 24)) + 1;
+            if (daysElapsed > 30) {
+                appState.config.breakEvenResetDate = todayStr;
+                saveData();
+                resetDateStr = todayStr;
+                resetDate = new Date(resetDateStr);
+                daysElapsed = 1;
+            }
 
             // Recalcular variáveis necessárias para as sub-abas
             const salariesCosts = appState.employees.reduce((acc, emp) => acc + (emp.salary || 0), 0);
@@ -988,10 +1330,11 @@
             
             const totalRevenue = monthlySales.reduce((acc, s) => acc + s.total, 0);
             const totalVariableCosts = monthlySales.reduce((acc, s) => {
-                return acc + s.items.reduce((itemAcc, item) => {
+                const materialsCost = s.items.reduce((itemAcc, item) => {
                     const product = appState.inventory.find(p => p.id === item.productId);
                     return itemAcc + (product ? (product.costPrice * item.qty) : 0);
                 }, 0);
+                return acc + materialsCost + (s.deliveryHelperCostTotal || 0);
             }, 0);
             
             const contributionMargin = totalRevenue - totalVariableCosts;
@@ -1010,6 +1353,18 @@
                 return Math.ceil((next - new Date()) / (1000 * 60 * 60 * 24)) <= 7;
             });
 
+            // Contas Fixas Urgentes (Atrasadas ou Próximas)
+            const todayDay = new Date().getDate();
+            const urgentFixedAccounts = appState.fixedAccounts.filter(acc => {
+                const isPaid = appState.transactions.some(t => t.description.includes(acc.description) && t.date.startsWith(currentMonth));
+                if (isPaid) return false;
+                
+                // Atrasada (dia do vencimento menor que hoje) ou Próxima (nos próximos 5 dias)
+                const isOverdue = acc.dueDay < todayDay;
+                const isUpcoming = acc.dueDay >= todayDay && acc.dueDay <= todayDay + 5;
+                return isOverdue || isUpcoming;
+            });
+
             if (dashboardSubTab === 'geral') {
                 return `
                     <div class="space-y-4">
@@ -1025,6 +1380,12 @@
                                     <button onclick="resetBreakEven()" class="p-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-red-500 hover:text-white rounded-lg transition-all" title="Zerar Ciclo">
                                         <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
                                     </button>
+                                </div>
+                            </div>
+                            <div class="mb-3 flex items-center gap-2">
+                                <span class="text-[9px] font-black uppercase text-slate-400">Dia ${daysElapsed}/30</span>
+                                <div class="h-1.5 w-20 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                    <div class="h-1.5 bg-primary-500" style="width: ${Math.min(100, (daysElapsed / 30) * 100)}%"></div>
                                 </div>
                             </div>
                             <div class="relative h-4 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden mb-3">
@@ -1160,60 +1521,110 @@
                 `;
             } else {
                 return `
-                    <div class="space-y-4">
-                        <div class="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm">
-                            <h4 class="text-sm font-bold mb-4 flex items-center gap-2">
-                                <i data-lucide="alert-triangle" class="w-4 h-4 text-red-500"></i>
-                                Itens em Falta no Estoque
+                    <div class="space-y-6 animate-fade-in pb-8">
+                        <!-- Estoque Alerts -->
+                        <div class="space-y-3">
+                            <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2 ml-1">
+                                <i data-lucide="package" class="w-3 h-3"></i>
+                                Estoque Crítico
                             </h4>
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div class="grid grid-cols-1 gap-3">
                                 ${lowStockItems.length > 0 ? lowStockItems.map(p => `
-                                    <div class="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 rounded-2xl">
-                                        <div class="flex items-center gap-3">
-                                            <div class="w-8 h-8 bg-white dark:bg-slate-800 rounded-full flex items-center justify-center text-red-600 shadow-sm">
-                                                <i data-lucide="package" class="w-4 h-4"></i>
+                                    <div class="flex items-center justify-between p-4 bg-white dark:bg-slate-800 rounded-[2rem] border border-red-100 dark:border-red-900/20 shadow-sm">
+                                        <div class="flex items-center gap-4">
+                                            <div class="w-12 h-12 bg-red-50 dark:bg-red-900/20 text-red-600 rounded-2xl flex items-center justify-center shadow-inner">
+                                                <i data-lucide="alert-circle" class="w-6 h-6"></i>
                                             </div>
                                             <div>
-                                                <p class="text-[11px] font-bold text-slate-900 dark:text-white">${p.name}</p>
-                                                <p class="text-[9px] text-red-600">Restam ${p.stock} ${p.unit}</p>
+                                                <p class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${p.name}</p>
+                                                <p class="text-[10px] text-red-600 font-bold uppercase">Restam apenas ${p.stock} ${p.unit}</p>
                                             </div>
                                         </div>
-                                        <button onclick="switchTab('estoque')" class="p-2 bg-red-600 text-white rounded-lg group-active:scale-95 transition-all">
-                                            <i data-lucide="plus" class="w-3 h-3"></i>
+                                        <button onclick="switchTab('estoque')" class="w-10 h-10 bg-red-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-red-500/20 active:scale-95 transition-all">
+                                            <i data-lucide="plus" class="w-5 h-5"></i>
                                         </button>
                                     </div>
-                                `).join('') : '<p class="text-center text-slate-400 py-10 text-xs w-full">Tudo em ordem no estoque!</p>'}
+                                `).join('') : `
+                                    <div class="p-8 bg-slate-50 dark:bg-slate-800/50 rounded-[2rem] border border-dashed border-slate-200 dark:border-slate-700 text-center">
+                                        <i data-lucide="check-circle" class="w-8 h-8 text-slate-300 mx-auto mb-2"></i>
+                                        <p class="text-xs font-bold text-slate-400 uppercase">Estoque em dia</p>
+                                    </div>
+                                `}
                             </div>
                         </div>
 
-                        <div class="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm">
-                            <h4 class="text-sm font-bold mb-4 flex items-center gap-2">
-                                <i data-lucide="wrench" class="w-4 h-4 text-orange-500"></i>
-                                Manutenção de Formas e Máquinas
+                        <!-- Financeiro Alerts -->
+                        <div class="space-y-3">
+                            <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2 ml-1">
+                                <i data-lucide="calendar" class="w-3 h-3"></i>
+                                Pendências Financeiras
                             </h4>
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div class="grid grid-cols-1 gap-3">
+                                ${urgentFixedAccounts.length > 0 ? urgentFixedAccounts.map(acc => {
+                                    const isOverdue = acc.dueDay < todayDay;
+                                    return `
+                                        <div class="flex items-center justify-between p-4 bg-white dark:bg-slate-800 rounded-[2rem] border ${isOverdue ? 'border-red-100 dark:border-red-900/20' : 'border-amber-100 dark:border-amber-900/20'} shadow-sm">
+                                            <div class="flex items-center gap-4">
+                                                <div class="w-12 h-12 ${isOverdue ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'} rounded-2xl flex items-center justify-center shadow-inner">
+                                                    <i data-lucide="${isOverdue ? 'alert-triangle' : 'clock'}" class="w-6 h-6"></i>
+                                                </div>
+                                                <div>
+                                                    <p class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${acc.description}</p>
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="text-[10px] ${isOverdue ? 'text-red-600' : 'text-amber-600'} font-black uppercase">${isOverdue ? 'ATRASADA' : 'VENCE DIA ' + acc.dueDay}</span>
+                                                        <span class="w-1 h-1 bg-slate-300 rounded-full"></span>
+                                                        <span class="text-[10px] font-black text-slate-900 dark:text-white">${formatCurrency(acc.amount)}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <button onclick="switchTab('caixa')" class="w-10 h-10 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl flex items-center justify-center active:scale-95 transition-all">
+                                                <i data-lucide="arrow-right" class="w-5 h-5"></i>
+                                            </button>
+                                        </div>
+                                    `;
+                                }).join('') : `
+                                    <div class="p-8 bg-slate-50 dark:bg-slate-800/50 rounded-[2rem] border border-dashed border-slate-200 dark:border-slate-700 text-center">
+                                        <i data-lucide="check-circle" class="w-8 h-8 text-slate-300 mx-auto mb-2"></i>
+                                        <p class="text-xs font-bold text-slate-400 uppercase">Sem contas atrasadas</p>
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+
+                        <!-- Manutenção Alerts -->
+                        <div class="space-y-3">
+                            <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2 ml-1">
+                                <i data-lucide="wrench" class="w-3 h-3"></i>
+                                Manutenção Preventiva
+                            </h4>
+                            <div class="grid grid-cols-1 gap-3">
                                 ${urgentEquipment.length > 0 ? urgentEquipment.map(e => {
                                     const last = new Date(e.lastMaintenance);
                                     const next = new Date(last);
                                     next.setDate(last.getDate() + e.maintenanceInterval);
                                     const diffDays = Math.ceil((next - new Date()) / (1000 * 60 * 60 * 24));
                                     return `
-                                        <div class="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/30 rounded-2xl">
-                                            <div class="flex items-center gap-3">
-                                                <div class="w-8 h-8 bg-white dark:bg-slate-800 rounded-full flex items-center justify-center text-orange-600 shadow-sm">
-                                                    <i data-lucide="cog" class="w-4 h-4"></i>
+                                        <div class="flex items-center justify-between p-4 bg-white dark:bg-slate-800 rounded-[2rem] border border-orange-100 dark:border-orange-900/20 shadow-sm">
+                                            <div class="flex items-center gap-4">
+                                                <div class="w-12 h-12 bg-orange-50 dark:bg-orange-900/20 text-orange-600 rounded-2xl flex items-center justify-center shadow-inner">
+                                                    <i data-lucide="settings" class="w-6 h-6"></i>
                                                 </div>
                                                 <div>
-                                                    <p class="text-[11px] font-bold text-slate-900 dark:text-white">${e.name}</p>
-                                                    <p class="text-[9px] text-orange-600">Vence em ${diffDays} dias</p>
+                                                    <p class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${e.name}</p>
+                                                    <p class="text-[10px] text-orange-600 font-bold uppercase">Manutenção em ${diffDays} dias</p>
                                                 </div>
                                             </div>
-                                            <button onclick="recordMaintenance(${e.id})" class="p-2 bg-orange-600 text-white rounded-lg group-active:scale-95 transition-all">
-                                                <i data-lucide="check" class="w-3 h-3"></i>
+                                            <button onclick="recordMaintenance(${e.id})" class="w-10 h-10 bg-orange-500 text-white rounded-xl flex items-center justify-center shadow-lg shadow-orange-500/20 active:scale-95 transition-all">
+                                                <i data-lucide="check" class="w-5 h-5"></i>
                                             </button>
                                         </div>
                                     `;
-                                }).join('') : '<p class="text-center text-slate-400 py-10 text-xs w-full">Nenhuma manutenção para hoje.</p>'}
+                                }).join('') : `
+                                    <div class="p-8 bg-slate-50 dark:bg-slate-800/50 rounded-[2rem] border border-dashed border-slate-200 dark:border-slate-700 text-center">
+                                        <i data-lucide="check-circle" class="w-8 h-8 text-slate-300 mx-auto mb-2"></i>
+                                        <p class="text-xs font-bold text-slate-400 uppercase">Equipamentos revisados</p>
+                                    </div>
+                                `}
                             </div>
                         </div>
                     </div>
@@ -1528,6 +1939,10 @@
                                 <label class="block text-sm font-medium mb-1">Preço de Venda (R$)</label>
                                 <input type="number" step="0.01" id="p-sell" required value="${product?.sellPrice || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                             </div>
+                            <div id="p-helper-container" class="md:col-span-1 ${product?.type === 'raw' ? 'hidden' : ''}">
+                                <label class="block text-sm font-medium mb-1">Custo Ajudante Entrega (por unidade) (R$)</label>
+                                <input type="number" step="0.01" id="p-helper" value="${product?.helperFee ?? 0}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                            </div>
                             <div>
                                 <label class="block text-sm font-medium mb-1">Estoque Atual</label>
                                 <input type="number" step="0.001" id="p-stock" required value="${product?.stock || 0}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
@@ -1597,6 +2012,7 @@
                     category: document.getElementById('p-cat').value,
                     costPrice: parseFloat(document.getElementById('p-cost').value) || 0,
                     sellPrice: parseFloat(document.getElementById('p-sell').value) || 0,
+                    helperFee: document.getElementById('p-type').value === 'final' ? (parseFloat(document.getElementById('p-helper').value) || 0) : 0,
                     stock: parseFloat(document.getElementById('p-stock').value) || 0,
                     minStock: parseFloat(document.getElementById('p-min').value) || 0,
                     unit: document.getElementById('p-unit').value,
@@ -1621,12 +2037,15 @@
             const type = document.getElementById('p-type').value;
             const recipeSection = document.getElementById('recipe-section');
             const sellContainer = document.getElementById('p-sell-container');
+            const helperContainer = document.getElementById('p-helper-container');
             
             recipeSection.classList.toggle('hidden', type !== 'final');
             sellContainer.classList.toggle('hidden', type === 'raw');
+            helperContainer.classList.toggle('hidden', type === 'raw');
             
             if (type === 'raw') {
                 document.getElementById('p-sell').value = 0;
+                document.getElementById('p-helper').value = 0;
             }
         }
 
@@ -2600,9 +3019,51 @@
 
         function editClient(id) { openClientModal(id); }
         function deleteClient(id) {
-            if (confirm('Excluir este cliente?')) {
-                appState.clients = appState.clients.filter(c => c.id !== id);
-                saveData(); renderClientes(); showToast('Removido.', 'error');
+            const client = appState.clients.find(c => c.id === id);
+            if (!client) return;
+
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-black dark:text-white uppercase tracking-tight">Confirmar Exclusão</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <div class="space-y-6">
+                        <div class="p-5 bg-red-50 dark:bg-red-900/10 rounded-3xl border border-red-100 dark:border-red-900/20 flex flex-col items-center text-center gap-4">
+                            <div class="w-16 h-16 bg-white dark:bg-slate-800 text-red-600 rounded-2xl flex items-center justify-center shadow-sm">
+                                <i data-lucide="trash-2" class="w-8 h-8"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-base font-black text-slate-900 dark:text-white uppercase tracking-tight">Excluir Cliente?</p>
+                                <p class="text-sm text-slate-500 mt-1">Você está prestes a excluir o cliente <b>${client.name}</b>. Esta ação não pode ser desfeita.</p>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-3">
+                            <button onclick="closeModal()" class="w-full py-3.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-600 transition-all active:scale-[0.98]">
+                                Cancelar
+                            </button>
+                            <button id="confirm-delete-client" class="w-full py-3.5 bg-red-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-700 shadow-lg shadow-red-500/20 transition-all active:scale-[0.98]">
+                                Confirmar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+
+            const confirmBtn = document.getElementById('confirm-delete-client');
+            if (confirmBtn) {
+                confirmBtn.onclick = () => {
+                    appState.clients = appState.clients.filter(c => c.id !== id);
+                    saveData();
+                    renderClientes();
+                    closeModal();
+                    showToast('Cliente removido com sucesso.', 'error');
+                };
             }
         }
 
@@ -3222,7 +3683,26 @@
         }
 
         function renderVendasHome() {
-            const completedSales = appState.sales.filter(s => s.status === 'completed');
+            const now = new Date();
+            const todayStr = now.toISOString().split('T')[0];
+            const currentMonth = todayStr.substring(0, 7);
+            let resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
+            const resetDate = new Date(resetDateStr);
+            let endDate = new Date(resetDate);
+            endDate.setDate(resetDate.getDate() + 29);
+            let endDateStr = endDate.toISOString().split('T')[0];
+            let daysElapsed = Math.floor((new Date(todayStr) - resetDate) / (1000 * 60 * 60 * 24)) + 1;
+            if (daysElapsed > 30) {
+                appState.config.breakEvenResetDate = todayStr;
+                saveData();
+                resetDateStr = todayStr;
+                const nd = new Date(resetDateStr);
+                endDate = new Date(nd);
+                endDate.setDate(nd.getDate() + 29);
+                endDateStr = endDate.toISOString().split('T')[0];
+                daysElapsed = 1;
+            }
+            const completedSales = appState.sales.filter(s => s.status === 'completed' && s.date >= resetDateStr && s.date <= endDateStr);
             const pendingSales = appState.sales.filter(s => s.status === 'pending');
             
             const totalSalesCount = completedSales.length;
@@ -3273,6 +3753,7 @@
                                         <h2 class="text-6xl font-black text-slate-900 dark:text-white tracking-tighter">${totalSalesCount}</h2>
                                         <span class="text-lg font-bold text-slate-400 uppercase tracking-widest">Vendas</span>
                                     </div>
+                                    <p class="text-[10px] text-slate-400 uppercase mt-1">Ciclo 30 dias • ${formatDate(resetDateStr)} a ${formatDate(endDateStr)}</p>
                                     <p class="text-xs text-green-600 font-bold uppercase mt-2 flex items-center gap-1">
                                         <i data-lucide="check-circle" class="w-3 h-3"></i>
                                         Operação ativa e saudável
@@ -3590,6 +4071,15 @@
         function finalizePendingSale(saleId) {
             const sale = appState.sales.find(s => s.id === saleId);
             if (!sale) return;
+            const helperUnits = (sale.items || []).reduce((acc, i) => acc + (i.qty || 0), 0);
+            const defaultHelperFee = (() => {
+                const first = (sale.items || [])[0];
+                if (!first) return 0;
+                const p = appState.inventory.find(x => x.id === first.productId);
+                return p?.helperFee || 0;
+            })();
+            const helperCountDefault = sale.deliveryHelperCount ?? 1;
+            const helperFeeDefault = sale.deliveryHelperFeePerUnit ?? defaultHelperFee;
 
             // Abrir modal para confirmar detalhes finais do recebimento
             let html = `
@@ -3617,6 +4107,29 @@
                             <label class="block text-sm font-medium mb-1">Data do Recebimento (Hoje)</label>
                             <input type="date" id="confirm-payment-date" value="${new Date().toISOString().split('T')[0]}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500">
                         </div>
+                        <div class="p-4 bg-slate-50 dark:bg-slate-700/40 border border-slate-100 dark:border-slate-700 rounded-xl">
+                            <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Custo Ajudante (por unidade)</p>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantidade de ajudantes</label>
+                                    <select id="confirm-helper-count" class="w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
+                                        ${[0,1,2,3].map(n => `<option value="${n}" ${n === helperCountDefault ? 'selected' : ''}>${n}</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Valor do ajudante (R$)</label>
+                                    <input type="number" step="0.01" id="confirm-helper-fee" value="${helperFeeDefault}" class="w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
+                                </div>
+                            </div>
+                            <div class="flex justify-between items-center mt-3 text-xs">
+                                <span class="font-bold text-slate-500">Unidades no pedido</span>
+                                <span class="font-black text-slate-700 dark:text-slate-200">${helperUnits}</span>
+                            </div>
+                            <div class="flex justify-between items-center mt-1 text-xs">
+                                <span class="font-bold text-slate-500">Custo ajudante total</span>
+                                <span id="confirm-helper-total" class="font-black text-primary-600">${formatCurrency((helperCountDefault || 0) * (helperFeeDefault || 0) * helperUnits)}</span>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-3 mt-8">
@@ -3628,15 +4141,28 @@
                 </div>
             `;
             openModal(html);
+            const updateHelperTotal = () => {
+                const c = parseInt(document.getElementById('confirm-helper-count').value) || 0;
+                const f = parseFloat(document.getElementById('confirm-helper-fee').value) || 0;
+                document.getElementById('confirm-helper-total').innerText = formatCurrency(c * f * helperUnits);
+            };
+            document.getElementById('confirm-helper-count').onchange = updateHelperTotal;
+            document.getElementById('confirm-helper-fee').oninput = updateHelperTotal;
 
             document.getElementById('btn-confirm-final').onclick = () => {
                 const finalMethod = document.getElementById('confirm-payment-method').value;
                 const finalDate = document.getElementById('confirm-payment-date').value;
+                const helperCount = parseInt(document.getElementById('confirm-helper-count').value) || 0;
+                const helperFeePerUnit = parseFloat(document.getElementById('confirm-helper-fee').value) || 0;
 
                 // 1. Mark as completed
                 sale.status = 'completed';
                 sale.date = finalDate; // Data real do recebimento
                 sale.paymentMethod = finalMethod;
+                sale.deliveryHelperCount = helperCount;
+                sale.deliveryHelperFeePerUnit = helperFeePerUnit;
+                sale.deliveryHelperUnits = helperUnits;
+                sale.deliveryHelperCostTotal = helperCount * helperFeePerUnit * helperUnits;
 
                 // 2. Record Transaction - Entrada (Bruto)
                 appState.transactions.push({
@@ -4000,6 +4526,22 @@
                 status: status, // 'completed' or 'pending'
                 employeeId: currentUser.role === 'Vendedor' ? 1 : null 
             };
+
+            if (status === 'pending') {
+                const first = sale.items[0];
+                const p = first ? appState.inventory.find(x => x.id === first.productId) : null;
+                const helperFeePerUnit = p?.helperFee || 0;
+                const helperUnits = sale.items.reduce((acc, i) => acc + (i.qty || 0), 0);
+                sale.deliveryHelperCount = 1;
+                sale.deliveryHelperFeePerUnit = helperFeePerUnit;
+                sale.deliveryHelperUnits = helperUnits;
+                sale.deliveryHelperCostTotal = sale.deliveryHelperCount * sale.deliveryHelperFeePerUnit * helperUnits;
+            } else {
+                sale.deliveryHelperCount = 0;
+                sale.deliveryHelperFeePerUnit = 0;
+                sale.deliveryHelperUnits = 0;
+                sale.deliveryHelperCostTotal = 0;
+            }
             appState.sales.push(sale);
 
             // 2. Record Transactions ONLY if completed now
@@ -4110,13 +4652,13 @@
                 doc.setFont(undefined, 'normal');
                 doc.text(`CNPJ: ${config.cnpj}`, 15, 32);
                 doc.text(`${config.address}`, 15, 37);
-                doc.text(`TEL: ${config.phone}`, 15, 42);
+                doc.text(`WHATSAPP/TEL: ${config.phone}`, 15, 42);
 
-                // Número do Recibo (Canto Direito)
+                // Título (Canto Direito)
                 doc.setFontSize(26);
                 doc.setFont(undefined, 'bold');
                 doc.setTextColor(lightGray[0], lightGray[1], lightGray[2]);
-                doc.text('RECIBO', 195, 25, { align: 'right' });
+                doc.text('PEDIDO', 195, 25, { align: 'right' });
                 
                 doc.setFontSize(12);
                 doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
@@ -4180,7 +4722,7 @@
 
                 if (typeof doc.autoTable !== 'function') {
                     showToast('Erro: Biblioteca de tabelas não carregada.', 'error');
-                    doc.save(`RECIBO_${sale.id}.pdf`);
+                    doc.save(`PEDIDO_${sale.id}.pdf`);
                     return;
                 }
 
@@ -4255,8 +4797,43 @@
                 doc.text('TOTAL:', summaryX + 5, finalY + 22);
                 doc.text(formatCurrency(sale.total), 190, finalY + 22, { align: 'right' });
 
-                // 5. Assinaturas e Rodapé
-                const signY = 255;
+                // 5. Seção de Informações Importantes
+                const infoY = finalY + 35;
+                doc.setDrawColor(accentColor[0], accentColor[1], accentColor[2]);
+                doc.setLineWidth(0.5);
+                doc.line(15, infoY, 195, infoY);
+                
+                doc.setFontSize(10);
+                doc.setFont(undefined, 'bold');
+                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
+                doc.text('INFORMAÇÕES IMPORTANTES', 15, infoY + 7);
+                
+                doc.setFontSize(8);
+                doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+                
+                // Encomenda de Serviços
+                doc.setFont(undefined, 'bold');
+                doc.text('ENCOMENDA DE SERVIÇOS E ORÇAMENTOS', 15, infoY + 14);
+                doc.setFont(undefined, 'normal');
+                doc.text('• Pilares incluem entrega e instalação do pré-moldado.', 15, infoY + 19);
+                doc.text('• A instalação refere-se apenas ao posicionamento do pré-moldado.', 15, infoY + 24);
+                doc.text('• Manilhas e tampas possuem somente serviço de entrega.', 15, infoY + 29);
+                
+                // Garantia
+                doc.setFont(undefined, 'bold');
+                doc.text('GARANTIA DOS PRODUTOS', 15, infoY + 37);
+                doc.setFont(undefined, 'normal');
+                doc.text('Todos os produtos possuem garantia de 1 (um) ano contra defeitos de fabricação.', 15, infoY + 42);
+                
+                // Recomendação
+                doc.setFont(undefined, 'bold');
+                doc.text('RECOMENDAÇÃO PARA PILAR DE CAIXA D\'ÁGUA', 15, infoY + 50);
+                doc.setFont(undefined, 'normal');
+                doc.text('Após a instalação do pilar para caixa d\'água, recomenda-se aguardar', 15, infoY + 55);
+                doc.text('o prazo mínimo de 5 dias antes de instalar ou colocar a caixa d\'água.', 15, infoY + 60);
+
+                // 6. Assinaturas e Rodapé
+                const signY = 270;
                 doc.setDrawColor(226, 232, 240);
                 doc.setLineWidth(0.5);
                 doc.line(30, signY, 90, signY);
@@ -4271,7 +4848,7 @@
                 doc.setTextColor(lightGray[0], lightGray[1], lightGray[2]);
                 doc.text('Documento gerado digitalmente pelo sistema de gestão da fábrica.', 105, 285, { align: 'center' });
 
-                doc.save(`RECIBO_${sale.id}_${sale.clientName.replace(/\s+/g, '_')}.pdf`);
+                doc.save(`PEDIDO_${sale.id}_${sale.clientName.replace(/\s+/g, '_')}.pdf`);
             } catch (err) {
                 console.error('Erro ao gerar PDF:', err);
                 showToast('Erro ao gerar PDF: ' + err.message, 'error');
@@ -4445,6 +5022,13 @@
                         </div>
                         <h4 class="font-bold dark:text-white">Vendas</h4>
                         <p class="text-xs text-slate-500 mt-1">Performance por produto/cliente</p>
+                    </div>
+                    <div onclick="generateReport('custo_real_produtos')" class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 hover:border-primary-500 cursor-pointer transition-all group text-center">
+                        <div class="w-14 h-14 bg-slate-50 dark:bg-slate-900/20 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                            <i data-lucide="calculator" class="w-8 h-8 text-slate-600"></i>
+                        </div>
+                        <h4 class="font-bold dark:text-white">Custo Real</h4>
+                        <p class="text-xs text-slate-500 mt-1">Produtos + entrega (ajudantes)</p>
                     </div>
                     <div onclick="generateReport('caixa')" class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 hover:border-primary-500 cursor-pointer transition-all group text-center">
                         <div class="w-14 h-14 bg-orange-50 dark:bg-orange-900/20 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
@@ -4734,12 +5318,310 @@
             applyDREFilters();
         }
 
+        function computeRealProductCostReport(start, end, productId, clientId) {
+            const sales = appState.sales.filter(s => {
+                const isConfirmedDelivery = s.status === 'completed' && !!s.deliveryDate;
+                if (!isConfirmedDelivery) return false;
+                if (start && s.deliveryDate < start) return false;
+                if (end && s.deliveryDate > end) return false;
+                if (clientId && String(s.clientId || 0) !== String(clientId)) return false;
+                return true;
+            });
+
+            const rows = [];
+            sales.forEach(sale => {
+                const helperCount = sale.deliveryHelperCount ?? 1;
+                const helperFeePerUnit = sale.deliveryHelperFeePerUnit ?? 0;
+                (sale.items || []).forEach(item => {
+                    const p = appState.inventory.find(x => x.id === item.productId);
+                    if (productId && String(item.productId) !== String(productId)) return;
+
+                    const qty = item.qty || 0;
+                    const revenue = (item.price || 0) * qty;
+                    const fabricationCost = (p?.costPrice || 0) * qty;
+                    const effectiveHelperFee = helperFeePerUnit || (p?.helperFee || 0);
+                    const helperCost = qty * helperCount * effectiveHelperFee;
+                    const totalCost = fabricationCost + helperCost;
+                    const profit = revenue - totalCost;
+
+                    rows.push({
+                        saleId: sale.id,
+                        deliveryDate: sale.deliveryDate || sale.date,
+                        clientId: sale.clientId || 0,
+                        clientName: sale.clientName || '',
+                        productId: item.productId,
+                        productName: item.name || p?.name || 'Produto',
+                        qty,
+                        revenue,
+                        fabricationCost,
+                        helperCount,
+                        helperFeePerUnit: effectiveHelperFee,
+                        helperCost,
+                        totalCost,
+                        profit
+                    });
+                });
+            });
+
+            rows.sort((a, b) => (b.deliveryDate || '').localeCompare(a.deliveryDate || '') || (b.saleId - a.saleId));
+
+            const totals = rows.reduce((acc, r) => {
+                acc.totalQty += r.qty;
+                acc.totalRevenue += r.revenue;
+                acc.totalFabrication += r.fabricationCost;
+                acc.totalHelpers += r.helperCost;
+                acc.totalProfit += r.profit;
+                return acc;
+            }, { totalQty: 0, totalRevenue: 0, totalFabrication: 0, totalHelpers: 0, totalProfit: 0 });
+
+            return { rows, totals };
+        }
+
+        function applyRealCostFilters() {
+            const start = document.getElementById('rc-start')?.value || '';
+            const end = document.getElementById('rc-end')?.value || '';
+            const productId = document.getElementById('rc-product')?.value || '';
+            const clientId = document.getElementById('rc-client')?.value || '';
+
+            const data = computeRealProductCostReport(start, end, productId, clientId);
+            const container = document.getElementById('rc-content');
+            if (!container) return;
+
+            container.innerHTML = renderRealProductCostReport(data);
+            lucide.createIcons();
+        }
+
+        function setRealCostPreset(preset) {
+            const now = new Date();
+            const today = now.toISOString().split('T')[0];
+            let start = '';
+            let end = '';
+
+            if (preset === 'this_month') {
+                const m = now.toISOString().slice(0, 7);
+                const range = getMonthRange(m);
+                start = range.start;
+                end = range.end;
+            } else if (preset === 'last_month') {
+                const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                const m = d.toISOString().slice(0, 7);
+                const range = getMonthRange(m);
+                start = range.start;
+                end = range.end;
+            } else if (preset === 'last_30') {
+                const d = new Date(now);
+                d.setDate(d.getDate() - 30);
+                start = d.toISOString().split('T')[0];
+                end = today;
+            } else if (preset === 'all') {
+                start = '';
+                end = '';
+            }
+
+            const startEl = document.getElementById('rc-start');
+            const endEl = document.getElementById('rc-end');
+            if (startEl) startEl.value = start;
+            if (endEl) endEl.value = end;
+            applyRealCostFilters();
+        }
+
+        function renderRealProductCostReport(data) {
+            const { rows, totals } = data;
+
+            const cards = rows.map(r => `
+                <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-4 space-y-3">
+                    <div class="flex justify-between items-start gap-3">
+                        <div class="min-w-0">
+                            <p class="text-[10px] font-black uppercase tracking-widest text-slate-400">Entrega</p>
+                            <p class="text-sm font-black text-slate-900 dark:text-white">${formatDate(r.deliveryDate)}</p>
+                            <p class="text-[10px] font-bold text-slate-400 uppercase truncate">${r.clientName}</p>
+                        </div>
+                        <div class="text-right shrink-0">
+                            <p class="text-[10px] font-black uppercase tracking-widest text-slate-400">Lucro</p>
+                            <p class="text-sm font-black ${r.profit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(r.profit)}</p>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="font-black text-slate-600 dark:text-slate-300 uppercase truncate">${r.productName}</span>
+                        <span class="font-black text-slate-900 dark:text-white">${r.qty}</span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <div class="flex justify-between">
+                            <span class="text-slate-400 font-bold uppercase text-[10px]">Receita</span>
+                            <span class="font-black text-primary-600">${formatCurrency(r.revenue)}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-slate-400 font-bold uppercase text-[10px]">Custo Fab.</span>
+                            <span class="font-black text-slate-700 dark:text-slate-200">${formatCurrency(r.fabricationCost)}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-slate-400 font-bold uppercase text-[10px]">Ajudante</span>
+                            <span class="font-black text-orange-600">${formatCurrency(r.helperCost)}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-slate-400 font-bold uppercase text-[10px]">Custo Total</span>
+                            <span class="font-black text-slate-900 dark:text-white">${formatCurrency(r.totalCost)}</span>
+                        </div>
+                    </div>
+
+                    <div class="pt-3 border-t border-slate-100 dark:border-slate-700 text-[10px] font-bold text-slate-400 uppercase flex justify-between">
+                        <span>#${r.saleId}</span>
+                        <span>${r.helperCount} ajud. × ${formatCurrency(r.helperFeePerUnit)} / un</span>
+                    </div>
+                </div>
+            `).join('');
+
+            const table = `
+                <div class="overflow-x-auto hidden sm:block">
+                    <table class="w-full text-[11px] text-left">
+                        <thead class="bg-slate-50 dark:bg-slate-700/50">
+                            <tr>
+                                <th class="px-3 py-3">Entrega</th>
+                                <th class="px-3 py-3">Cliente</th>
+                                <th class="px-3 py-3">Produto</th>
+                                <th class="px-3 py-3 text-right">Qtd</th>
+                                <th class="px-3 py-3 text-right">Receita</th>
+                                <th class="px-3 py-3 text-right">Custo Fab.</th>
+                                <th class="px-3 py-3 text-right">Ajudante</th>
+                                <th class="px-3 py-3 text-right">Custo Total</th>
+                                <th class="px-3 py-3 text-right">Lucro</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
+                            ${rows.map(r => `
+                                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                                    <td class="px-3 py-3 text-slate-500">${formatDate(r.deliveryDate)}</td>
+                                    <td class="px-3 py-3 font-medium">${r.clientName}</td>
+                                    <td class="px-3 py-3 font-bold">${r.productName}</td>
+                                    <td class="px-3 py-3 text-right font-bold">${r.qty}</td>
+                                    <td class="px-3 py-3 text-right font-bold text-primary-600">${formatCurrency(r.revenue)}</td>
+                                    <td class="px-3 py-3 text-right">${formatCurrency(r.fabricationCost)}</td>
+                                    <td class="px-3 py-3 text-right text-orange-600">${formatCurrency(r.helperCost)}</td>
+                                    <td class="px-3 py-3 text-right font-bold">${formatCurrency(r.totalCost)}</td>
+                                    <td class="px-3 py-3 text-right font-bold ${r.profit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(r.profit)}</td>
+                                </tr>
+                            `).join('') || `
+                                <tr><td colspan="9" class="px-3 py-10 text-center text-slate-400">Nenhuma venda com entrega confirmada no período.</td></tr>
+                            `}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            return `
+                <div class="space-y-6">
+                    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                        <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Produtos</p>
+                            <p class="text-lg font-black text-slate-900 dark:text-white">${totals.totalQty}</p>
+                        </div>
+                        <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Receita</p>
+                            <p class="text-sm font-black text-primary-600">${formatCurrency(totals.totalRevenue)}</p>
+                        </div>
+                        <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Custo Fab.</p>
+                            <p class="text-sm font-black text-slate-900 dark:text-white">${formatCurrency(totals.totalFabrication)}</p>
+                        </div>
+                        <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ajudantes</p>
+                            <p class="text-sm font-black text-orange-600">${formatCurrency(totals.totalHelpers)}</p>
+                        </div>
+                        <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 col-span-2 sm:col-span-1">
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Lucro</p>
+                            <p class="text-sm font-black ${totals.totalProfit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(totals.totalProfit)}</p>
+                        </div>
+                    </div>
+
+                    <div class="space-y-3 sm:hidden">
+                        ${cards || '<div class="py-10 text-center text-slate-400">Nenhuma venda com entrega confirmada no período.</div>'}
+                    </div>
+
+                    ${table}
+                </div>
+            `;
+        }
+
+        function openRealProductCostReportModal() {
+            const now = new Date();
+            const month = now.toISOString().slice(0, 7);
+            const range = getMonthRange(month);
+
+            const products = appState.inventory.filter(p => p.type === 'final').slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            const clients = appState.clients.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-bold dark:text-white">Custo dos Produtos com Entrega</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-4 mb-6 space-y-4">
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <button onclick="setRealCostPreset('this_month')" class="py-2 rounded-xl bg-primary-50 dark:bg-primary-900/20 text-primary-600 font-black text-[10px] uppercase tracking-widest hover:bg-primary-100 dark:hover:bg-primary-900/30 transition-all">Este mês</button>
+                            <button onclick="setRealCostPreset('last_month')" class="py-2 rounded-xl bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-200 font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 dark:hover:bg-slate-600 transition-all">Mês passado</button>
+                            <button onclick="setRealCostPreset('last_30')" class="py-2 rounded-xl bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-200 font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 dark:hover:bg-slate-600 transition-all">Últimos 30d</button>
+                            <button onclick="setRealCostPreset('all')" class="py-2 rounded-xl bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-200 font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 dark:hover:bg-slate-600 transition-all">Tudo</button>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Início</p>
+                                <input type="date" id="rc-start" value="${range.start}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
+                            </div>
+                            <div>
+                                <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Fim</p>
+                                <input type="date" id="rc-end" value="${range.end}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Produto</p>
+                                <select id="rc-product" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
+                                    <option value="">Todos</option>
+                                    ${products.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div>
+                                <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Cliente</p>
+                                <select id="rc-client" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
+                                    <option value="">Todos</option>
+                                    ${clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+                                </select>
+                            </div>
+                        </div>
+
+                        <button onclick="applyRealCostFilters()" class="w-full py-3 bg-primary-600 text-white font-black rounded-2xl hover:brightness-95 transition-all active:scale-95 uppercase text-[10px] tracking-widest">Aplicar</button>
+                    </div>
+
+                    <div id="rc-content"></div>
+
+                    <div class="mt-8 pt-4 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2">
+                        <button onclick="window.print()" class="px-4 py-2 bg-slate-100 dark:bg-slate-700 rounded-lg text-sm font-bold hover:bg-slate-200 transition-all">Imprimir</button>
+                        <button onclick="closeModal()" class="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-bold hover:brightness-95 transition-all">Fechar</button>
+                    </div>
+                </div>
+            `;
+
+            openModal(html);
+            applyRealCostFilters();
+        }
+
         function generateReport(type) {
             let title = "";
             let content = "";
             
             if (type === 'financeiro') {
                 openFinanceReportModal();
+                return;
+            } else if (type === 'custo_real_produtos') {
+                openRealProductCostReportModal();
                 return;
             } else if (type === 'estoque') {
                 title = "Relatório de Estoque";
@@ -4895,8 +5777,18 @@
             const currentMonthName = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
             
             // LÓGICA DE DATA DE RESET (Consistente com Dashboard)
-            const resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
-            const resetDate = new Date(resetDateStr);
+            let resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
+            let resetDate = new Date(resetDateStr);
+            const todayStr = now.toISOString().split('T')[0];
+            const todayDate = new Date(todayStr);
+            let daysElapsed = Math.floor((todayDate - resetDate) / (1000 * 60 * 60 * 24)) + 1;
+            if (daysElapsed > 30) {
+                appState.config.breakEvenResetDate = todayStr;
+                saveData();
+                resetDateStr = todayStr;
+                resetDate = new Date(resetDateStr);
+                daysElapsed = 1;
+            }
 
             // Ponto de Equilíbrio Calculations
             const salariesCosts = appState.employees.reduce((acc, emp) => acc + (emp.salary || 0), 0);
@@ -4912,10 +5804,11 @@
             const totalRevenue = monthlySales.reduce((acc, s) => acc + s.total, 0);
             
             const totalVariableCosts = monthlySales.reduce((acc, s) => {
-                return acc + s.items.reduce((itemAcc, item) => {
+                const materialsCost = s.items.reduce((itemAcc, item) => {
                     const product = appState.inventory.find(p => p.id === item.productId);
                     return itemAcc + (product ? (product.costPrice * item.qty) : 0);
                 }, 0);
+                return acc + materialsCost + (s.deliveryHelperCostTotal || 0);
             }, 0);
 
             const contributionMargin = totalRevenue - totalVariableCosts;
@@ -4935,7 +5828,7 @@
                         <p class="text-slate-500 dark:text-slate-400">Controle de custos e lucratividade da fábrica</p>
                     </div>
                     <div class="flex gap-2">
-                        <button onclick="resetBreakEven()" class="bg-white dark:bg-slate-800 border border-red-200 dark:border-red-900/30 text-red-600 px-4 py-2 rounded-xl flex items-center gap-2 font-bold text-sm hover:bg-red-50 transition-all">
+                        <button onclick="confirmResetBreakEven()" class="bg-white dark:bg-slate-800 border border-red-200 dark:border-red-900/30 text-red-600 px-4 py-2 rounded-xl flex items-center gap-2 font-bold text-sm hover:bg-red-50 transition-all">
                             <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reiniciar Ciclo
                         </button>
                         <button onclick="openGoalModal()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-semibold shadow-lg shadow-primary-500/20 transition-all">
@@ -4957,6 +5850,13 @@
                     </div>
                     
                     <div class="p-6">
+                        <div class="mb-4 flex items-center gap-3">
+                            <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ciclo atual</span>
+                            <span class="text-xs font-black text-primary-600">Dia ${daysElapsed} / 30</span>
+                            <div class="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden w-32">
+                                <div class="bg-primary-500 h-full" style="width: ${Math.min(100, (daysElapsed / 30) * 100)}%"></div>
+                            </div>
+                        </div>
                         <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
                             <!-- Circular Progress -->
                             <div class="flex flex-col items-center justify-center lg:border-r border-slate-100 dark:border-slate-700 pr-6">
@@ -5107,9 +6007,31 @@
                                     <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">CNPJ</label>
                                     <input type="text" id="conf-cnpj" value="${appState.config.cnpj}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
                                 </div>
-                                <div>
-                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Endereço Completo</label>
-                                    <textarea id="conf-addr" rows="3" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">${appState.config.address}</textarea>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rua / Avenida</label>
+                                        <input type="text" id="conf-addr-street" value="${appState.config.addressStreet || ''}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Número</label>
+                                        <input type="text" id="conf-addr-number" value="${appState.config.addressNumber || ''}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Bairro</label>
+                                        <input type="text" id="conf-addr-neighborhood" value="${appState.config.addressNeighborhood || ''}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Cidade</label>
+                                        <input type="text" id="conf-addr-city" value="${appState.config.addressCity || ''}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Estado</label>
+                                        <input type="text" id="conf-addr-state" value="${appState.config.addressState || ''}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">CEP</label>
+                                        <input type="text" id="conf-addr-cep" value="${appState.config.addressCEP || ''}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                    </div>
                                 </div>
                             </div>
                             <button onclick="saveConfig()" class="w-full mt-6 py-4 bg-primary-600 text-white font-black rounded-2xl hover:bg-primary-700 shadow-lg shadow-primary-500/20 transition-all active:scale-95 uppercase text-xs tracking-widest">
@@ -5163,6 +6085,54 @@
                 `;
             }
 
+            if (configTab === 'acesso') {
+                return `
+                    <div class="space-y-6 animate-fade-in">
+                        <button onclick="switchConfigTab('menu')" class="flex items-center gap-2 text-primary-600 font-black text-[10px] uppercase tracking-widest mb-4">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i> Voltar ao Menu
+                        </button>
+                        
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700">
+                            <h3 class="font-black mb-6 flex items-center gap-2 uppercase tracking-tighter text-slate-900 dark:text-white">
+                                <i data-lucide="key" class="w-5 h-5 text-primary-600"></i>
+                                Acesso
+                            </h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Email de Acesso</label>
+                                    <input type="email" id="conf-login-email" value="${appState.config.loginEmail || ''}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Senha Atual</label>
+                                    <div class="relative">
+                                        <input type="password" id="conf-login-current-pass" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                        <button onclick="togglePasswordVisibility('conf-login-current-pass')" class="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-primary-600 transition-colors">
+                                            <i data-lucide="eye" class="w-5 h-5" id="eye-conf-login-current-pass"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Nova Senha</label>
+                                    <div class="relative">
+                                        <input type="password" id="conf-login-pass" value="" placeholder="Deixe vazio para manter a atual" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                        <button onclick="togglePasswordVisibility('conf-login-pass')" class="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-primary-600 transition-colors">
+                                            <i data-lucide="eye" class="w-5 h-5" id="eye-conf-login-pass"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Texto da Dica no Login</label>
+                                    <textarea id="conf-login-hint" rows="3" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">${appState.config.loginHintText || ''}</textarea>
+                                </div>
+                            </div>
+                            <button onclick="saveAccessSettings()" class="w-full mt-6 py-4 bg-primary-600 text-white font-black rounded-2xl hover:bg-primary-700 shadow-lg shadow-primary-500/20 transition-all active:scale-95 uppercase text-xs tracking-widest">
+                                Salvar Acesso
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+
             if (configTab === 'manutencao') {
                 return `
                     <div class="space-y-6 animate-fade-in">
@@ -5205,9 +6175,14 @@
                                                     <span class="text-[10px] font-black ${isUrgent ? 'text-red-600' : 'text-slate-400'} uppercase">${diffDays} DIAS</span>
                                                 </div>
                                             </div>
-                                            <button onclick="recordMaintenance(${e.id})" class="w-full py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-[9px] font-black rounded-xl hover:bg-primary-600 hover:text-white transition-all uppercase tracking-widest">
-                                                Registrar Manutenção
-                                            </button>
+                                            <div class="flex gap-2">
+                                                <button onclick="recordMaintenance(${e.id})" class="flex-1 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-[9px] font-black rounded-xl hover:bg-primary-600 hover:text-white transition-all uppercase tracking-widest">
+                                                    Registrar Manutenção
+                                                </button>
+                                                <button onclick="deleteEquipment(${e.id})" class="py-2 px-3 bg-white dark:bg-slate-800 border border-red-200 dark:border-red-900/30 text-red-600 text-[9px] font-black rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-all uppercase tracking-widest">
+                                                    Excluir
+                                                </button>
+                                            </div>
                                         </div>
                                     `;
                                 }).join('') || '<p class="text-center py-8 text-slate-400 italic text-xs uppercase font-bold">Nenhum equipamento cadastrado.</p>'}
@@ -5305,6 +6280,19 @@
                         <i data-lucide="chevron-right" class="w-5 h-5 text-slate-300 group-hover:text-primary-500 transition-all"></i>
                     </button>
 
+                    <button onclick="switchConfigTab('acesso')" class="w-full p-5 bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-between group hover:border-primary-500 transition-all active:scale-[0.98]">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 rounded-2xl flex items-center justify-center">
+                                <i data-lucide="key" class="w-6 h-6"></i>
+                            </div>
+                            <div class="text-left">
+                                <h4 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">Acesso</h4>
+                                <p class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Email, Senha e Dica</p>
+                            </div>
+                        </div>
+                        <i data-lucide="chevron-right" class="w-5 h-5 text-slate-300 group-hover:text-primary-500 transition-all"></i>
+                    </button>
+
                     <button onclick="switchConfigTab('manutencao')" class="w-full p-5 bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-between group hover:border-primary-500 transition-all active:scale-[0.98]">
                         <div class="flex items-center gap-4">
                             <div class="w-12 h-12 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 rounded-2xl flex items-center justify-center">
@@ -5337,7 +6325,19 @@
         function saveConfig() {
             appState.config.companyName = document.getElementById('conf-name').value;
             appState.config.cnpj = document.getElementById('conf-cnpj').value;
-            appState.config.address = document.getElementById('conf-addr').value;
+            const streetEl = document.getElementById('conf-addr-street');
+            const numberEl = document.getElementById('conf-addr-number');
+            const neighEl = document.getElementById('conf-addr-neighborhood');
+            const cityEl = document.getElementById('conf-addr-city');
+            const stateEl = document.getElementById('conf-addr-state');
+            const cepEl = document.getElementById('conf-addr-cep');
+            if (streetEl) appState.config.addressStreet = streetEl.value;
+            if (numberEl) appState.config.addressNumber = numberEl.value;
+            if (neighEl) appState.config.addressNeighborhood = neighEl.value;
+            if (cityEl) appState.config.addressCity = cityEl.value;
+            if (stateEl) appState.config.addressState = stateEl.value;
+            if (cepEl) appState.config.addressCEP = cepEl.value;
+            appState.config.address = composeCompanyAddress(appState.config);
             saveData();
             showToast('Configurações salvas!');
             switchConfigTab('menu');
@@ -5372,7 +6372,19 @@
         function saveConfig() {
              appState.config.companyName = document.getElementById('conf-name').value;
              appState.config.cnpj = document.getElementById('conf-cnpj').value;
-             appState.config.address = document.getElementById('conf-addr').value;
+             const streetEl = document.getElementById('conf-addr-street');
+             const numberEl = document.getElementById('conf-addr-number');
+             const neighEl = document.getElementById('conf-addr-neighborhood');
+             const cityEl = document.getElementById('conf-addr-city');
+             const stateEl = document.getElementById('conf-addr-state');
+             const cepEl = document.getElementById('conf-addr-cep');
+             if (streetEl) appState.config.addressStreet = streetEl.value;
+             if (numberEl) appState.config.addressNumber = numberEl.value;
+             if (neighEl) appState.config.addressNeighborhood = neighEl.value;
+             if (cityEl) appState.config.addressCity = cityEl.value;
+             if (stateEl) appState.config.addressState = stateEl.value;
+             if (cepEl) appState.config.addressCEP = cepEl.value;
+             appState.config.address = composeCompanyAddress(appState.config);
              saveData();
              showToast('Configurações salvas!');
              switchConfigTab('menu');
@@ -5400,6 +6412,71 @@
                 saveData();
                 renderConfig();
                 showToast(`Manutenção de "${eq.name}" registrada!`);
+            }
+        }
+        function deleteEquipment(id) {
+            appState.equipment = appState.equipment.filter(e => e.id !== id);
+            saveData();
+            renderConfig();
+            showToast('Equipamento excluído!');
+        }
+
+        function saveAccessSettings() {
+            const emailEl = document.getElementById('conf-login-email');
+            const currentPassEl = document.getElementById('conf-login-current-pass');
+            const passEl = document.getElementById('conf-login-pass');
+            const hintEl = document.getElementById('conf-login-hint');
+
+            const currentPass = (currentPassEl?.value || '').trim();
+            let newPass = (passEl?.value || '').trim();
+            const email = (emailEl?.value || '').trim();
+            const hint = (hintEl?.value || '').trim();
+
+            if (currentPass !== appState.config.loginPassword) {
+                showToast('A senha atual está incorreta.', 'error');
+                return;
+            }
+
+            // Se a nova senha estiver vazia, mantém a atual
+            if (!newPass) {
+                newPass = appState.config.loginPassword;
+            }
+
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-black dark:text-white uppercase tracking-tight">Confirmar Alteração</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                        <p class="text-sm font-bold text-slate-700 dark:text-slate-200">Tem certeza que deseja alterar a senha?</p>
+                    </div>
+                    <div class="mt-6 flex gap-3">
+                        <button onclick="closeModal()" class="flex-1 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-all">
+                            Cancelar
+                        </button>
+                        <button id="confirm-pass-change" class="flex-1 py-3 bg-primary-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:brightness-95 transition-all">
+                            Confirmar
+                        </button>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+            
+            const confirmBtn = document.getElementById('confirm-pass-change');
+            if (confirmBtn) {
+                confirmBtn.onclick = () => {
+                    appState.config.loginEmail = email;
+                    appState.config.loginPassword = newPass;
+                    appState.config.loginHintText = hint;
+                    saveData();
+                    updateLoginHint();
+                    closeModal();
+                    showToast('Acesso atualizado!');
+                    switchConfigTab('menu');
+                };
             }
         }
 
@@ -5533,7 +6610,10 @@
             }
 
             switchTab('dashboard');
-            lucide.createIcons();
+            try {
+                lucide.createIcons();
+            } catch (_) {
+            }
         }
 
         function renderContent() {
@@ -5559,11 +6639,14 @@
             if (currentUser) {
                 initApp();
             } else {
-                lucide.createIcons();
+                try {
+                    lucide.createIcons();
+                } catch (_) {
+                }
             }
         };
 
-        if ('serviceWorker' in navigator) {
+        if ('serviceWorker' in navigator && location.protocol !== 'file:') {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('./service-worker.js');
             });
