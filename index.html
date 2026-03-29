@@ -720,6 +720,9 @@
                 if (tabId === 'config') {
                     configTab = 'menu';
                 }
+                if (tabId === 'dashboard') {
+                    dashboardSubTab = 'geral';
+                }
                 if (tabId === 'vendas') {
                     vendasSubTab = 'home';
                 }
@@ -4071,7 +4074,7 @@
         function finalizePendingSale(saleId) {
             const sale = appState.sales.find(s => s.id === saleId);
             if (!sale) return;
-            const helperUnits = (sale.items || []).reduce((acc, i) => acc + (i.qty || 0), 0);
+            const helperUnits = (sale.items || []).reduce((acc, i) => acc + (i.isMeter ? (i.units || 1) : (i.qty || 0)), 0);
             const defaultHelperFee = (() => {
                 const first = (sale.items || [])[0];
                 if (!first) return 0;
@@ -4218,7 +4221,29 @@
             
             const sale = appState.sales[saleIndex];
             
-            if (confirm(`Deseja realmente CANCELAR o pedido #${saleId}? O estoque dos produtos será devolvido.`)) {
+            const html = `
+                <div class="p-6 text-center">
+                    <div class="w-16 h-16 bg-red-100 dark:bg-red-900/20 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i data-lucide="alert-triangle" class="w-8 h-8"></i>
+                    </div>
+                    <h3 class="text-xl font-black dark:text-white uppercase tracking-tight mb-2">Cancelar Entrega?</h3>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-8">
+                        Tem certeza que deseja cancelar o pedido <b>#${saleId}</b>? <br>
+                        O estoque dos produtos será devolvido automaticamente.
+                    </p>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button onclick="closeModal()" class="py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
+                            Voltar
+                        </button>
+                        <button id="confirm-cancel-sale-btn" class="py-3.5 rounded-2xl bg-red-600 text-white font-black text-xs uppercase tracking-widest hover:bg-red-700 shadow-lg shadow-red-500/20 transition-all active:scale-95">
+                            Confirmar
+                        </button>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+            
+            document.getElementById('confirm-cancel-sale-btn').onclick = () => {
                 // 1. Return items to stock
                 sale.items.forEach(item => {
                     const product = appState.inventory.find(p => p.id === item.productId);
@@ -4227,20 +4252,29 @@
                     }
                 });
 
-                // 2. Remove the sale or mark as cancelled
-                // To keep history, we could mark as 'cancelled', but for now let's just remove to keep it clean as requested
+                // 2. Remove the sale
                 appState.sales.splice(saleIndex, 1);
 
                 saveData();
+                closeModal();
                 showToast('Pedido cancelado e estoque devolvido!', 'error');
                 renderVendas();
-            }
+            };
         }
 
         function addToCart(productId) {
             const product = appState.inventory.find(p => p.id === productId);
             if (!product) {
                 showToast('Produto não encontrado!', 'error');
+                return;
+            }
+
+            const isByMeter = (product.unit || '').toLowerCase().trim() === 'm' || 
+                             (product.unit || '').toLowerCase().trim() === 'metro' || 
+                             (product.unit || '').toLowerCase().trim() === 'metros';
+
+            if (isByMeter) {
+                openMeterProductModal(product);
                 return;
             }
 
@@ -4267,31 +4301,158 @@
             updatePDVCart();
         }
 
-        function removeFromCart(productId) {
-            currentCart = currentCart.filter(item => item.productId !== productId);
+        function openMeterProductModal(product) {
+            let html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-bold dark:text-white uppercase tracking-tight">${product.name}</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    
+                    <div class="p-4 bg-primary-50 dark:bg-primary-900/20 rounded-2xl border border-primary-100 dark:border-primary-800 mb-6">
+                        <p class="text-xs font-bold text-primary-600 dark:text-primary-400 uppercase mb-1">Preço por Metro</p>
+                        <p class="text-xl font-black text-primary-700 dark:text-primary-300">${formatCurrency(product.sellPrice)}</p>
+                    </div>
+
+                    <form id="meter-product-form" class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Qtd de Unidades</label>
+                                <input type="number" id="meter-units" required min="1" value="1" step="1"
+                                    class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Comprimento (Metros)</label>
+                                <input type="number" id="meter-length" required min="0.1" value="1" step="0.01"
+                                    class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                            </div>
+                        </div>
+
+                        <div id="meter-calc-preview" class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="text-[10px] font-bold text-slate-400 uppercase">Total em Metros</span>
+                                <span id="meter-total-display" class="text-sm font-black text-slate-900 dark:text-white">1.00 m</span>
+                            </div>
+                            <div class="flex justify-between items-center border-t border-slate-100 dark:border-slate-600 pt-2">
+                                <span class="text-[10px] font-bold text-slate-400 uppercase">Valor Total</span>
+                                <span id="meter-price-display" class="text-lg font-black text-primary-600">${formatCurrency(product.sellPrice)}</span>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="w-full py-4 bg-primary-600 text-white font-black rounded-2xl shadow-lg shadow-primary-500/20 transition-all active:scale-95 uppercase text-xs tracking-widest">
+                            Adicionar ao Carrinho
+                        </button>
+                    </form>
+                </div>
+            `;
+            openModal(html);
+
+            const unitsInput = document.getElementById('meter-units');
+            const lengthInput = document.getElementById('meter-length');
+            const totalDisplay = document.getElementById('meter-total-display');
+            const priceDisplay = document.getElementById('meter-price-display');
+
+            const updatePreview = () => {
+                const units = parseInt(unitsInput.value) || 0;
+                const length = parseFloat(lengthInput.value) || 0;
+                const total = units * length;
+                const price = total * product.sellPrice;
+                totalDisplay.innerText = `${total.toFixed(2)} m`;
+                priceDisplay.innerText = formatCurrency(price);
+            };
+
+            unitsInput.oninput = updatePreview;
+            lengthInput.oninput = updatePreview;
+
+            document.getElementById('meter-product-form').onsubmit = (e) => {
+                e.preventDefault();
+                const units = parseInt(unitsInput.value);
+                const length = parseFloat(lengthInput.value);
+                const totalQty = units * length;
+
+                currentCart.push({
+                    productId: product.id,
+                    name: product.name,
+                    price: product.sellPrice,
+                    qty: totalQty,
+                    isMeter: true,
+                    units: units,
+                    lengthPerUnit: length
+                });
+
+                saveData();
+                closeModal();
+                updatePDVCart();
+                showToast(`${product.name} adicionado!`);
+            };
+        }
+
+        function removeFromCart(index) {
+            currentCart.splice(index, 1);
             updatePDVCart();
         }
 
-        function editCartItemPrice(productId) {
-            const item = currentCart.find(i => i.productId === productId);
+        function editCartItemPrice(index) {
+            const item = currentCart[index];
             if (!item) return;
 
-            const newPrice = prompt(`Alterar preço unitário de "${item.name}":`, item.price);
-            if (newPrice !== null) {
-                const price = parseFloat(newPrice);
-                if (!isNaN(price) && price >= 0) {
-                    item.price = price;
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-black dark:text-white uppercase tracking-tight">Alterar valor do produto</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <div class="space-y-6">
+                        <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Produto</p>
+                            <p class="text-sm font-bold text-slate-900 dark:text-white uppercase">${item.name}</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Novo Valor Unitário (R$)</label>
+                            <input type="number" id="edit-cart-price-input" step="0.01" value="${item.price}" 
+                                class="w-full p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-lg shadow-sm transition-all">
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-3">
+                            <button onclick="closeModal()" class="py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
+                                Cancelar
+                            </button>
+                            <button id="confirm-price-edit-btn" class="py-3.5 rounded-2xl bg-primary-600 text-white font-black text-xs uppercase tracking-widest hover:bg-primary-700 shadow-lg shadow-primary-500/20 transition-all active:scale-95">
+                                Confirmar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+
+            const input = document.getElementById('edit-cart-price-input');
+            input.focus();
+            input.select();
+
+            document.getElementById('confirm-price-edit-btn').onclick = () => {
+                const newPrice = parseFloat(input.value);
+                if (!isNaN(newPrice) && newPrice >= 0) {
+                    item.price = newPrice;
                     updatePDVCart();
+                    closeModal();
                     showToast('Preço unitário alterado!');
                 } else {
                     showToast('Preço inválido!', 'error');
                 }
-            }
+            };
         }
 
-        function updateQty(productId, delta) {
-            const item = currentCart.find(i => i.productId === productId);
-            const product = appState.inventory.find(p => p.id === productId);
+        function updateQty(index, delta) {
+            const item = currentCart[index];
+            if (!item) return;
+            const product = appState.inventory.find(p => p.id === item.productId);
             
             const newQty = item.qty + delta;
             if (newQty > 0) {
@@ -4300,7 +4461,7 @@
                     showToast(`Quantidade (${newQty}) maior que o estoque atual (${product.stock})`, 'warning');
                 }
             } else if (newQty === 0) {
-                removeFromCart(productId);
+                removeFromCart(index);
             }
             updatePDVCart();
         }
@@ -4328,18 +4489,26 @@
             container.innerHTML = currentCart.map((item, index) => {
                 subtotal += item.price * item.qty;
                 return `
-                    <div class="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-600/50 group animate-fade-in">
+                    <div class="flex items-center justify-between p-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 group animate-fade-in shadow-sm">
                         <div class="min-w-0 flex-1">
                             <h5 class="text-[10px] font-black text-slate-900 dark:text-white uppercase truncate tracking-tight">${item.name}</h5>
-                            <button onclick="editCartItemPrice(${item.productId})" class="text-[10px] font-bold text-primary-600 hover:underline">${formatCurrency(item.price)}</button>
+                            ${item.isMeter ? `<p class="text-[9px] font-bold text-primary-600 uppercase mt-0.5">${item.units} un de ${item.lengthPerUnit}m</p>` : ''}
+                            <button onclick="editCartItemPrice(${index})" class="text-[10px] font-bold text-slate-400 hover:text-primary-600 transition-colors mt-1 flex items-center gap-1">
+                                <i data-lucide="edit-3" class="w-2.5 h-2.5"></i>
+                                ${formatCurrency(item.price)}
+                            </button>
                         </div>
                         <div class="flex items-center gap-2 ml-4">
-                            <div class="flex items-center bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-600 px-2 py-1">
-                                <button onclick="updateQty(${item.productId}, -1)" class="p-1 hover:text-primary-600"><i data-lucide="minus" class="w-3 h-3"></i></button>
-                                <span class="px-2 text-xs font-black min-w-[20px] text-center">${item.qty}</span>
-                                <button onclick="updateQty(${item.productId}, 1)" class="p-1 hover:text-primary-600"><i data-lucide="plus" class="w-3 h-3"></i></button>
+                            <div class="flex items-center bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-600/50 p-1">
+                                ${!item.isMeter ? `
+                                    <button onclick="updateQty(${index}, -1)" class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white dark:hover:bg-slate-600 hover:text-red-500 transition-all active:scale-90"><i data-lucide="minus" class="w-3 h-3"></i></button>
+                                    <span class="px-2 text-xs font-black min-w-[24px] text-center text-slate-700 dark:text-slate-200">${item.qty}</span>
+                                    <button onclick="updateQty(${index}, 1)" class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white dark:hover:bg-slate-600 hover:text-primary-600 transition-all active:scale-90"><i data-lucide="plus" class="w-3 h-3"></i></button>
+                                ` : `
+                                    <span class="px-2 text-xs font-black min-w-[24px] text-center text-primary-600">${item.qty.toFixed(2)}m</span>
+                                `}
                             </div>
-                            <button onclick="removeFromCart(${item.productId})" class="p-2 text-slate-300 hover:text-red-500 transition-colors">
+                            <button onclick="removeFromCart(${index})" class="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 rounded-xl transition-all active:scale-90">
                                 <i data-lucide="trash-2" class="w-4 h-4"></i>
                             </button>
                         </div>
@@ -4372,7 +4541,14 @@
             };
             
             generateQuotePDF(quoteData);
-            showToast('Orçamento gerado com sucesso!');
+            
+            // Clear Cart after quote
+            currentCart = [];
+            pdvClient = null;
+            pdvDiscount = 0;
+            updatePDVCart();
+            
+            showToast('Orçamento gerado e carrinho limpo!');
         }
 
         function checkoutPDV() {
@@ -4531,7 +4707,7 @@
                 const first = sale.items[0];
                 const p = first ? appState.inventory.find(x => x.id === first.productId) : null;
                 const helperFeePerUnit = p?.helperFee || 0;
-                const helperUnits = sale.items.reduce((acc, i) => acc + (i.qty || 0), 0);
+                const helperUnits = sale.items.reduce((acc, i) => acc + (i.isMeter ? (i.units || 1) : (i.qty || 0)), 0);
                 sale.deliveryHelperCount = 1;
                 sale.deliveryHelperFeePerUnit = helperFeePerUnit;
                 sale.deliveryHelperUnits = helperUnits;
@@ -4582,6 +4758,12 @@
             });
 
             saveData();
+            
+            // 4. Clear Cart
+            currentCart = [];
+            pdvClient = null;
+            pdvDiscount = 0;
+            updatePDVCart();
             
             if (status === 'completed') {
                 showToast(feeAmount > 0 ? `Venda finalizada! Líquido: ${formatCurrency(total - feeAmount)}` : 'Venda finalizada!');
@@ -4712,13 +4894,19 @@
                 doc.text(addrLine4.toUpperCase(), 105, clientY + 22);
 
                 // 3. Tabela de Itens (Estilo Excel Moderno)
-                const tableData = sale.items.map((item, index) => [
-                    index + 1,
-                    item.name.toUpperCase(),
-                    `${item.qty}`,
-                    formatCurrency(item.price),
-                    formatCurrency(item.price * item.qty)
-                ]);
+                const tableData = sale.items.map((item, index) => {
+                    let itemName = item.name.toUpperCase();
+                    if (item.isMeter) {
+                        itemName += `\n${item.units} UNIDADES DE ${item.lengthPerUnit}M`;
+                    }
+                    return [
+                        index + 1,
+                        itemName,
+                        `${item.qty}${item.isMeter ? 'm' : ''}`,
+                        formatCurrency(item.price),
+                        formatCurrency(item.price * item.qty)
+                    ];
+                });
 
                 if (typeof doc.autoTable !== 'function') {
                     showToast('Erro: Biblioteca de tabelas não carregada.', 'error');
@@ -4919,13 +5107,19 @@
                 doc.text(`Validade da Proposta: 7 dias corridos`, 15, clientY + 13);
 
                 // 3. Tabela de Itens (Estilo Excel Moderno)
-                const tableData = quote.items.map((item, index) => [
-                    index + 1,
-                    item.name.toUpperCase(),
-                    `${item.qty}`,
-                    formatCurrency(item.price),
-                    formatCurrency(item.price * item.qty)
-                ]);
+                const tableData = quote.items.map((item, index) => {
+                    let itemName = item.name.toUpperCase();
+                    if (item.isMeter) {
+                        itemName += `\n${item.units} UNIDADES DE ${item.lengthPerUnit}M`;
+                    }
+                    return [
+                        index + 1,
+                        itemName,
+                        `${item.qty}${item.isMeter ? 'm' : ''}`,
+                        formatCurrency(item.price),
+                        formatCurrency(item.price * item.qty)
+                    ];
+                });
 
                 doc.autoTable({
                     startY: clientY + 25,
@@ -5337,10 +5531,11 @@
                     if (productId && String(item.productId) !== String(productId)) return;
 
                     const qty = item.qty || 0;
+                    const displayQty = item.isMeter ? (item.units || 1) : qty;
                     const revenue = (item.price || 0) * qty;
                     const fabricationCost = (p?.costPrice || 0) * qty;
                     const effectiveHelperFee = helperFeePerUnit || (p?.helperFee || 0);
-                    const helperCost = qty * helperCount * effectiveHelperFee;
+                    const helperCost = displayQty * helperCount * effectiveHelperFee;
                     const totalCost = fabricationCost + helperCost;
                     const profit = revenue - totalCost;
 
@@ -5351,7 +5546,9 @@
                         clientName: sale.clientName || '',
                         productId: item.productId,
                         productName: item.name || p?.name || 'Produto',
-                        qty,
+                        qty: displayQty,
+                        totalMeters: item.isMeter ? qty : 0,
+                        isMeter: !!item.isMeter,
                         revenue,
                         fabricationCost,
                         helperCount,
@@ -5444,7 +5641,11 @@
 
                     <div class="flex justify-between items-center text-xs">
                         <span class="font-black text-slate-600 dark:text-slate-300 uppercase truncate">${r.productName}</span>
-                        <span class="font-black text-slate-900 dark:text-white">${r.qty}</span>
+                        <div class="flex items-center gap-1">
+                            <span class="font-black text-slate-900 dark:text-white">${r.qty}</span>
+                            <span class="text-[10px] text-slate-400 font-bold uppercase">${r.isMeter ? 'UNIDADES' : 'QTD'}</span>
+                            ${r.isMeter ? `<span class="text-[9px] text-slate-400 lowercase">(${r.totalMeters.toFixed(2)}m)</span>` : ''}
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-2 text-xs">
@@ -5481,7 +5682,7 @@
                                 <th class="px-3 py-3">Entrega</th>
                                 <th class="px-3 py-3">Cliente</th>
                                 <th class="px-3 py-3">Produto</th>
-                                <th class="px-3 py-3 text-right">Qtd</th>
+                                <th class="px-3 py-3 text-right">Qtd / Un</th>
                                 <th class="px-3 py-3 text-right">Receita</th>
                                 <th class="px-3 py-3 text-right">Custo Fab.</th>
                                 <th class="px-3 py-3 text-right">Ajudante</th>
@@ -5495,7 +5696,7 @@
                                     <td class="px-3 py-3 text-slate-500">${formatDate(r.deliveryDate)}</td>
                                     <td class="px-3 py-3 font-medium">${r.clientName}</td>
                                     <td class="px-3 py-3 font-bold">${r.productName}</td>
-                                    <td class="px-3 py-3 text-right font-bold">${r.qty}</td>
+                                    <td class="px-3 py-3 text-right font-bold">${r.qty}${r.isMeter ? ' un' : ''} ${r.isMeter ? `<br><span class="text-[9px] text-slate-400 font-normal">(${r.totalMeters.toFixed(2)}m)</span>` : ''}</td>
                                     <td class="px-3 py-3 text-right font-bold text-primary-600">${formatCurrency(r.revenue)}</td>
                                     <td class="px-3 py-3 text-right">${formatCurrency(r.fabricationCost)}</td>
                                     <td class="px-3 py-3 text-right text-orange-600">${formatCurrency(r.helperCost)}</td>
@@ -6114,7 +6315,7 @@
                                 <div>
                                     <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Nova Senha</label>
                                     <div class="relative">
-                                        <input type="password" id="conf-login-pass" value="" placeholder="Deixe vazio para manter a atual" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                        <input type="password" id="conf-login-pass" value="" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
                                         <button onclick="togglePasswordVisibility('conf-login-pass')" class="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-primary-600 transition-colors">
                                             <i data-lucide="eye" class="w-5 h-5" id="eye-conf-login-pass"></i>
                                         </button>
