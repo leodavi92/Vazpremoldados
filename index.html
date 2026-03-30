@@ -505,6 +505,7 @@
         let dashboardCharts = { cash: null, pie: null };
         let pdvClient = null;
         let pdvDiscount = 0;
+        let pdvPayments = [];
 
         // --- UTILS ---
         const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
@@ -1337,7 +1338,7 @@
                     const product = appState.inventory.find(p => p.id === item.productId);
                     return itemAcc + (product ? (product.costPrice * item.qty) : 0);
                 }, 0);
-                return acc + materialsCost + (s.deliveryHelperCostTotal || 0);
+                return acc + materialsCost + (s.deliveryHelperCostTotal || 0) + (s.fee || 0);
             }, 0);
             
             const contributionMargin = totalRevenue - totalVariableCosts;
@@ -2148,6 +2149,35 @@
             const totalOut = appState.transactions.filter(t => t.type === 'saida').reduce((acc, t) => acc + t.amount, 0);
             const showBalance = appState.config.showBalance;
 
+            // Agrupar transações por saleId para exibição
+            const groupedTransactions = [];
+            const processedSaleIds = new Set();
+
+            appState.transactions.slice().reverse().forEach(t => {
+                if (t.saleId) {
+                    if (!processedSaleIds.has(t.saleId)) {
+                        const saleGroup = appState.transactions.filter(x => x.saleId === t.saleId);
+                        const mainEntry = saleGroup.find(x => x.type === 'entrada') || t;
+                        const sale = appState.sales.find(s => s.id === t.saleId);
+                        
+                        const totalGross = saleGroup.filter(x => x.type === 'entrada').reduce((acc, x) => acc + x.amount, 0);
+                        const totalFees = saleGroup.filter(x => x.type === 'saida' && x.category === 'Taxas de Cartão').reduce((acc, x) => acc + x.amount, 0);
+                        
+                        groupedTransactions.push({
+                            ...mainEntry,
+                            type: 'entrada', // Forçar como entrada
+                            isGroup: true,
+                            amount: totalGross,
+                            fees: totalFees,
+                            description: `Venda — ${sale ? sale.clientName : (mainEntry.description.split(' - ')[1] || 'Consumidor Final')}`
+                        });
+                        processedSaleIds.add(t.saleId);
+                    }
+                } else {
+                    groupedTransactions.push({ ...t, isGroup: false });
+                }
+            });
+
             let html = `
                 <div class="max-w-md mx-auto sm:max-w-none px-1">
                     <!-- 1. TOPO DA TELA (SALDO ESTILO FINTECH) -->
@@ -2207,16 +2237,16 @@
                         </div>
                         
                         <div class="divide-y divide-slate-50 dark:divide-slate-700/50">
-                            ${appState.transactions.slice().reverse().slice(0, 5).map(t => renderFintechRow(t)).join('')}
+                            ${groupedTransactions.slice(0, 5).map(t => renderFintechRow(t)).join('')}
                         </div>
                         
-                        ${appState.transactions.length > 5 ? `
+                        ${groupedTransactions.length > 5 ? `
                             <button onclick="renderExtratoCompleto()" class="w-full py-4 text-[10px] font-black text-primary-600 uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all border-t border-slate-50 dark:border-slate-700/50">
                                 Ver Extrato Completo
                             </button>
                         ` : ''}
 
-                        ${appState.transactions.length === 0 ? `
+                        ${groupedTransactions.length === 0 ? `
                             <div class="p-12 text-center">
                                 <div class="w-12 h-12 bg-slate-50 dark:bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
                                     <i data-lucide="receipt" class="w-6 h-6"></i>
@@ -2232,6 +2262,35 @@
         }
 
         function openFullStatementModal() {
+            // Agrupar transações por saleId para exibição
+            const groupedTransactions = [];
+            const processedSaleIds = new Set();
+
+            appState.transactions.slice().reverse().forEach(t => {
+                if (t.saleId) {
+                    if (!processedSaleIds.has(t.saleId)) {
+                        const saleGroup = appState.transactions.filter(x => x.saleId === t.saleId);
+                        const mainEntry = saleGroup.find(x => x.type === 'entrada') || t;
+                        const sale = appState.sales.find(s => s.id === t.saleId);
+                        
+                        const totalGross = saleGroup.filter(x => x.type === 'entrada').reduce((acc, x) => acc + x.amount, 0);
+                        const totalFees = saleGroup.filter(x => x.type === 'saida' && x.category === 'Taxas de Cartão').reduce((acc, x) => acc + x.amount, 0);
+                        
+                        groupedTransactions.push({
+                            ...mainEntry,
+                            type: 'entrada',
+                            isGroup: true,
+                            amount: totalGross,
+                            fees: totalFees,
+                            description: `Venda — ${sale ? sale.clientName : (mainEntry.description.split(' - ')[1] || 'Consumidor Final')}`
+                        });
+                        processedSaleIds.add(t.saleId);
+                    }
+                } else {
+                    groupedTransactions.push({ ...t, isGroup: false });
+                }
+            });
+
             let html = `
                 <div class="flex flex-col h-[80vh]">
                     <div class="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center shrink-0">
@@ -2242,7 +2301,7 @@
                     </div>
                     <div class="flex-1 overflow-y-auto p-2">
                         <div class="divide-y divide-slate-50 dark:divide-slate-700/50 bg-white dark:bg-slate-800 rounded-2xl overflow-hidden">
-                            ${appState.transactions.slice().reverse().map(t => renderFintechRow(t)).join('')}
+                            ${groupedTransactions.map(t => renderFintechRow(t)).join('')}
                         </div>
                     </div>
                 </div>
@@ -2256,8 +2315,11 @@
             const day = dateObj.getDate().toString().padStart(2, '0');
             const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
 
+            // Se for um grupo de venda, usamos a função específica de detalhes
+            const clickAction = t.isGroup ? `openSaleTransactionDetails(${t.saleId})` : `openTransactionDetails(${t.id})`;
+
             return `
-                <div onclick="openTransactionDetails(${t.id})" class="p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-all cursor-pointer group active:bg-slate-100">
+                <div onclick="${clickAction}" class="p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-all cursor-pointer group active:bg-slate-100">
                     <div class="flex items-center gap-4 min-w-0">
                         <div class="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${isEntry ? 'bg-green-50 dark:bg-green-900/20 text-green-600' : 'bg-red-50 dark:bg-red-900/20 text-red-600'}">
                             <i data-lucide="${isEntry ? 'arrow-down-left' : 'arrow-up-right'}" class="w-5 h-5"></i>
@@ -2271,9 +2333,115 @@
                         <p class="text-sm font-black ${isEntry ? 'text-green-600' : 'text-red-600'}">
                             ${isEntry ? '+' : '-'} ${formatCurrency(t.amount)}
                         </p>
+                        ${t.isGroup && t.fees > 0 ? `
+                            <p class="text-[9px] font-bold text-red-500 mt-0.5">
+                                TAXAS: -${formatCurrency(t.fees)}
+                            </p>
+                        ` : ''}
                     </div>
                 </div>
             `;
+        }
+
+        function openSaleTransactionDetails(saleId) {
+            const sale = appState.sales.find(s => s.id === saleId);
+            // Busca transações vinculadas à venda (por ID ou por descrição com #)
+            const saleGroup = appState.transactions.filter(t => 
+                t.saleId === saleId || 
+                (t.description.includes('#' + saleId))
+            );
+            const totalGross = saleGroup.filter(t => t.type === 'entrada').reduce((acc, t) => acc + t.amount, 0);
+            const totalFees = saleGroup.filter(t => t.type === 'saida' && t.category === 'Taxas de Cartão').reduce((acc, t) => acc + t.amount, 0);
+            const netAmount = totalGross - totalFees;
+
+            const payments = saleGroup.filter(t => t.type === 'entrada');
+            const feesList = saleGroup.filter(t => t.type === 'saida' && t.category === 'Taxas de Cartão');
+
+            let html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-black dark:text-white uppercase tracking-tighter">Detalhamento da Venda</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-all">
+                            <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                        </button>
+                    </div>
+
+                    <!-- Resumo Principal -->
+                    <div class="bg-slate-50 dark:bg-slate-700/50 rounded-3xl p-6 text-center mb-6 border border-slate-100 dark:border-slate-600">
+                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Valor Bruto da Venda</p>
+                        <h2 class="text-3xl font-black text-primary-600 mb-1">${formatCurrency(totalGross)}</h2>
+                        <p class="text-xs font-bold text-slate-500 uppercase">${sale?.clientName || 'Consumidor Final'}</p>
+                    </div>
+
+                    <div class="space-y-4">
+                        <!-- Formas de Pagamento -->
+                        <div class="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl overflow-hidden shadow-sm">
+                            <div class="px-4 py-3 bg-slate-50 dark:bg-slate-700/50 border-b border-slate-100 dark:border-slate-700">
+                                <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Formas de Recebimento</h4>
+                            </div>
+                            <div class="divide-y divide-slate-50 dark:divide-slate-700/50">
+                                ${payments.map(p => `
+                                    <div class="px-4 py-3 flex justify-between items-center">
+                                        <span class="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">${p.paymentMethod}</span>
+                                        <span class="text-xs font-black text-slate-900 dark:text-white">${formatCurrency(p.amount)}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <!-- Taxas -->
+                        ${feesList.length > 0 ? `
+                            <div class="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl overflow-hidden shadow-sm">
+                                <div class="px-4 py-3 bg-red-50/50 dark:bg-red-900/10 border-b border-red-100 dark:border-red-900/20">
+                                    <h4 class="text-[10px] font-black text-red-500 uppercase tracking-widest">Custos Financeiros (Taxas)</h4>
+                                </div>
+                                <div class="divide-y divide-slate-50 dark:divide-slate-700/50">
+                                    ${feesList.map(f => `
+                                        <div class="px-4 py-3 flex justify-between items-center">
+                                            <span class="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">${f.description.split(' - ')[0]}</span>
+                                            <span class="text-xs font-black text-red-600">-${formatCurrency(f.amount)}</span>
+                                        </div>
+                                    `).join('')}
+                                    <div class="px-4 py-3 bg-slate-50/50 dark:bg-slate-700/30 flex justify-between items-center font-black">
+                                        <span class="text-[10px] text-slate-500 uppercase">Total de Taxas</span>
+                                        <span class="text-xs text-red-600">-${formatCurrency(totalFees)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        <!-- Valor Líquido -->
+                        <div class="bg-green-600 rounded-2xl p-4 text-white shadow-lg shadow-green-600/20 flex justify-between items-center">
+                            <div>
+                                <p class="text-[9px] font-black uppercase tracking-widest opacity-80">Valor Líquido Recebido</p>
+                                <h3 class="text-xl font-black">${formatCurrency(netAmount)}</h3>
+                            </div>
+                            <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
+                                <i data-lucide="trending-up" class="w-6 h-6"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3 mt-8">
+                        <button onclick="deleteSaleTransactions(${saleId}); closeModal();" class="flex items-center justify-center gap-2 py-4 bg-red-50 text-red-600 font-black rounded-2xl hover:bg-red-100 transition-all active:scale-95 uppercase text-[10px] tracking-widest">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i> Excluir Venda
+                        </button>
+                        <button onclick="closeModal()" class="flex items-center justify-center gap-2 py-4 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-2xl hover:bg-slate-200 transition-all active:scale-95 uppercase text-[10px] tracking-widest">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i> Voltar
+                        </button>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+        }
+
+        function deleteSaleTransactions(saleId) {
+            if (confirm('Atenção: Isso excluirá todas as transações financeiras vinculadas a esta venda. Deseja continuar?')) {
+                appState.transactions = appState.transactions.filter(t => t.saleId !== saleId);
+                saveData();
+                renderCaixa();
+                showToast('Transações da venda excluídas.', 'error');
+            }
         }
 
         function openTransactionDetails(id) {
@@ -2396,19 +2564,44 @@
             const end = document.getElementById('statement-end').value;
             const type = document.getElementById('statement-type').value;
 
-            const filtered = appState.transactions.filter(t => {
-                const matchesSearch = t.description.toLowerCase().includes(search) || t.category.toLowerCase().includes(search);
+            // Agrupar transações filtradas
+            const groupedFiltered = [];
+            const processedSaleIds = new Set();
+
+            appState.transactions.slice().reverse().forEach(t => {
+                const matchesSearch = !search || t.description.toLowerCase().includes(search) || t.category.toLowerCase().includes(search);
+                const matchesType = type === '' || t.type === type;
                 const matchesDate = (!start || t.date >= start) && (!end || t.date <= end);
-                const matchesType = !type || t.type === type;
-                return matchesSearch && matchesDate && matchesType;
+
+                if (matchesSearch && matchesType && matchesDate) {
+                    if (t.saleId) {
+                        if (!processedSaleIds.has(t.saleId)) {
+                            const saleGroup = appState.transactions.filter(x => x.saleId === t.saleId);
+                            const mainEntry = saleGroup.find(x => x.type === 'entrada') || t;
+                            const sale = appState.sales.find(s => s.id === t.saleId);
+                            
+                            const totalGross = saleGroup.filter(x => x.type === 'entrada').reduce((acc, x) => acc + x.amount, 0);
+                            const totalFees = saleGroup.filter(x => x.type === 'saida' && x.category === 'Taxas de Cartão').reduce((acc, x) => acc + x.amount, 0);
+                            
+                            groupedFiltered.push({
+                                ...mainEntry,
+                                type: 'entrada',
+                                isGroup: true,
+                                amount: totalGross,
+                                fees: totalFees,
+                                description: `Venda — ${sale ? sale.clientName : (mainEntry.description.split(' - ')[1] || 'Consumidor Final')}`
+                            });
+                            processedSaleIds.add(t.saleId);
+                        }
+                    } else {
+                        groupedFiltered.push({ ...t, isGroup: false });
+                    }
+                }
             });
 
-            const container = document.getElementById('full-statement-list');
-            if (container) {
-                container.innerHTML = filtered.slice().reverse().map(t => renderFintechRow(t)).join('') || 
-                    '<div class="p-12 text-center text-slate-400 italic">Nenhum lançamento encontrado.</div>';
-                lucide.createIcons();
-            }
+            document.getElementById('full-statement-list').innerHTML = groupedFiltered.map(t => renderFintechRow(t)).join('') || 
+                '<div class="p-12 text-center text-slate-400 italic">Nenhuma movimentação encontrada.</div>';
+            lucide.createIcons();
         }
 
         function renderContasFixas() {
@@ -2781,10 +2974,39 @@
         }
 
         function renderCaixaFiltered(transactions) {
+            // Agrupar transações filtradas para o modal de filtro
+            const groupedFiltered = [];
+            const processedSaleIds = new Set();
+
+            transactions.slice().reverse().forEach(t => {
+                if (t.saleId) {
+                    if (!processedSaleIds.has(t.saleId)) {
+                        const saleGroup = appState.transactions.filter(x => x.saleId === t.saleId);
+                        const mainEntry = saleGroup.find(x => x.type === 'entrada') || t;
+                        const sale = appState.sales.find(s => s.id === t.saleId);
+                        
+                        const totalGross = saleGroup.filter(x => x.type === 'entrada').reduce((acc, x) => acc + x.amount, 0);
+                        const totalFees = saleGroup.filter(x => x.type === 'saida' && x.category === 'Taxas de Cartão').reduce((acc, x) => acc + x.amount, 0);
+                        
+                        groupedFiltered.push({
+                            ...mainEntry,
+                            type: 'entrada',
+                            isGroup: true,
+                            amount: totalGross,
+                            fees: totalFees,
+                            description: `Venda — ${sale ? sale.clientName : (mainEntry.description.split(' - ')[1] || 'Consumidor Final')}`
+                        });
+                        processedSaleIds.add(t.saleId);
+                    }
+                } else {
+                    groupedFiltered.push({ ...t, isGroup: false });
+                }
+            });
+
             renderCaixa(); // Reset layout base
             const container = document.querySelector('.divide-y');
             if (container) {
-                container.innerHTML = transactions.slice().reverse().map(t => renderFintechRow(t)).join('') || 
+                container.innerHTML = groupedFiltered.map(t => renderFintechRow(t)).join('') || 
                     '<div class="p-12 text-center text-slate-400 italic">Nenhuma movimentação para este filtro.</div>';
                 lucide.createIcons();
             }
@@ -3226,11 +3448,50 @@
         }
 
         function setPDVDiscount() {
-            const val = prompt('Digite o valor do desconto (R$):', pdvDiscount);
-            if (val !== null) {
-                pdvDiscount = parseFloat(val) || 0;
-                updatePDVCart();
-            }
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-black dark:text-white uppercase tracking-tight">Aplicar desconto</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Valor do Desconto (R$)</label>
+                            <input type="number" id="discount-value-input" step="0.01" value="${pdvDiscount}" 
+                                class="w-full p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-lg shadow-sm transition-all">
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-3">
+                            <button onclick="closeModal()" class="py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
+                                Cancelar
+                            </button>
+                            <button id="confirm-discount-btn" class="py-3.5 rounded-2xl bg-primary-600 text-white font-black text-xs uppercase tracking-widest hover:bg-primary-700 shadow-lg shadow-primary-500/20 transition-all active:scale-95">
+                                Confirmar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+
+            const input = document.getElementById('discount-value-input');
+            input.focus();
+            input.select();
+
+            document.getElementById('confirm-discount-btn').onclick = () => {
+                const newVal = parseFloat(input.value);
+                if (!isNaN(newVal) && newVal >= 0) {
+                    pdvDiscount = newVal;
+                    updatePDVCart();
+                    closeModal();
+                    showToast('Desconto aplicado com sucesso!');
+                } else {
+                    showToast('Valor de desconto inválido!', 'error');
+                }
+            };
         }
 
         function openStockMovementModal() {
@@ -3654,7 +3915,11 @@
                                         <span class="text-xs font-bold text-slate-900 dark:text-white">Pedido #${s.id}</span>
                                         <span class="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold uppercase">Pago</span>
                                     </div>
-                                    <p class="text-[10px] text-slate-500">${formatDate(s.date)} • ${s.paymentMethod}</p>
+                                    <p class="text-[10px] text-slate-500">
+                                        ${formatDate(s.date)} • ${s.payments && s.payments.length > 0 
+                                            ? s.payments.map(p => p.method).join(' + ')
+                                            : s.paymentMethod}
+                                    </p>
                                     <p class="text-sm font-black text-primary-600 mt-1">${formatCurrency(s.total)}</p>
                                 </div>
                                 <button onclick="reprintReceipt(${s.id})" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl text-xs font-bold hover:bg-primary-50 hover:text-primary-600 transition-all shadow-sm">
@@ -3911,7 +4176,11 @@
                                             </td>
                                             <td class="px-6 py-4">
                                                 <div class="font-bold">${s.clientName}</div>
-                                                <div class="text-[10px] text-slate-500 uppercase">${s.paymentMethod}</div>
+                                                <div class="text-[10px] text-slate-500 uppercase">
+                                                    ${s.payments && s.payments.length > 0 
+                                                        ? s.payments.map(p => `${p.method} (${formatCurrency(p.amount)})`).join(' + ')
+                                                        : s.paymentMethod}
+                                                </div>
                                             </td>
                                             <td class="px-6 py-4 text-right font-bold text-primary-600">${formatCurrency(s.total)}</td>
                                             <td class="px-6 py-4 text-right">
@@ -4071,6 +4340,7 @@
             lucide.createIcons();
         }
 
+        let finalizePayments = [];
         function finalizePendingSale(saleId) {
             const sale = appState.sales.find(s => s.id === saleId);
             if (!sale) return;
@@ -4084,6 +4354,13 @@
             const helperCountDefault = sale.deliveryHelperCount ?? 1;
             const helperFeeDefault = sale.deliveryHelperFeePerUnit ?? defaultHelperFee;
 
+            // Inicializa pagamentos com o valor total da venda
+            if (sale.payments && sale.payments.length > 0) {
+                finalizePayments = sale.payments.map(p => ({ ...p }));
+            } else {
+                finalizePayments = [{ method: sale.paymentMethod || appState.config.paymentMethods[0], amount: sale.total }];
+            }
+
             // Abrir modal para confirmar detalhes finais do recebimento
             let html = `
                 <div class="p-6">
@@ -4095,21 +4372,31 @@
                     </div>
                     
                     <div class="mb-6 p-4 bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800 rounded-xl">
-                        <p class="text-sm text-orange-800 dark:text-orange-300">Confirmando entrega e recebimento do Pedido <b>#${saleId}</b></p>
-                        <p class="text-2xl font-black text-orange-600 mt-1">${formatCurrency(sale.total)}</p>
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-xs text-orange-800 dark:text-orange-300 uppercase font-bold tracking-wider">Valor do Pedido #${saleId}</span>
+                            <span class="text-2xl font-black text-orange-600">${formatCurrency(sale.total)}</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-[10px] text-orange-400 uppercase font-bold tracking-widest">Total Registrado</span>
+                            <span id="finalize-total-paid" class="text-sm font-bold text-slate-700 dark:text-slate-200">${formatCurrency(sale.total)}</span>
+                        </div>
                     </div>
 
                     <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium mb-1">Confirmar Forma de Pagamento</label>
-                            <select id="confirm-payment-method" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500">
-                                ${appState.config.paymentMethods.map(m => `<option value="${m}" ${m === sale.paymentMethod ? 'selected' : ''}>${m}</option>`).join('')}
-                            </select>
+                        <div id="finalize-payments-list" class="space-y-3">
+                            <!-- Lista de pagamentos -->
                         </div>
+
+                        <button onclick="addFinalizePaymentMethod(${sale.total})" class="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl text-slate-400 hover:text-primary-600 hover:border-primary-500 transition-all flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest">
+                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                            Adicionar forma de pagamento
+                        </button>
+
                         <div>
-                            <label class="block text-sm font-medium mb-1">Data do Recebimento (Hoje)</label>
-                            <input type="date" id="confirm-payment-date" value="${new Date().toISOString().split('T')[0]}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500">
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Data do Recebimento (Hoje)</label>
+                            <input type="date" id="confirm-payment-date" value="${new Date().toISOString().split('T')[0]}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 text-sm font-bold">
                         </div>
+
                         <div class="p-4 bg-slate-50 dark:bg-slate-700/40 border border-slate-100 dark:border-slate-700 rounded-xl">
                             <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Custo Ajudante (por unidade)</p>
                             <div class="grid grid-cols-2 gap-3">
@@ -4136,14 +4423,18 @@
                     </div>
 
                     <div class="grid grid-cols-2 gap-3 mt-8">
-                        <button onclick="closeModal()" class="py-3 rounded-xl border border-slate-200 dark:border-slate-700 font-semibold hover:bg-slate-50 dark:hover:bg-slate-700">Cancelar</button>
-                        <button id="btn-confirm-final" class="py-3 rounded-xl bg-success text-white font-bold hover:brightness-95 shadow-lg shadow-success/20 transition-all active:scale-95">
+                        <button onclick="closeModal()" class="py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
+                            Cancelar
+                        </button>
+                        <button id="btn-confirm-final" class="py-3.5 rounded-2xl bg-success text-white font-black text-xs uppercase tracking-widest hover:brightness-95 shadow-lg shadow-success/20 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale">
                             Confirmar Entrega e Receber
                         </button>
                     </div>
                 </div>
             `;
             openModal(html);
+            updateFinalizePaymentsUI(sale.total);
+
             const updateHelperTotal = () => {
                 const c = parseInt(document.getElementById('confirm-helper-count').value) || 0;
                 const f = parseFloat(document.getElementById('confirm-helper-fee').value) || 0;
@@ -4153,7 +4444,6 @@
             document.getElementById('confirm-helper-fee').oninput = updateHelperTotal;
 
             document.getElementById('btn-confirm-final').onclick = () => {
-                const finalMethod = document.getElementById('confirm-payment-method').value;
                 const finalDate = document.getElementById('confirm-payment-date').value;
                 const helperCount = parseInt(document.getElementById('confirm-helper-count').value) || 0;
                 const helperFeePerUnit = parseFloat(document.getElementById('confirm-helper-fee').value) || 0;
@@ -4161,58 +4451,164 @@
                 // 1. Mark as completed
                 sale.status = 'completed';
                 sale.date = finalDate; // Data real do recebimento
-                sale.paymentMethod = finalMethod;
+                sale.fee = 0; // Inicializar a taxa para acumular
+                sale.payments = finalizePayments.map(p => ({ ...p }));
+                sale.paymentMethod = finalizePayments.length === 1 ? finalizePayments[0].method : 'Múltiplos';
                 sale.deliveryHelperCount = helperCount;
                 sale.deliveryHelperFeePerUnit = helperFeePerUnit;
                 sale.deliveryHelperUnits = helperUnits;
                 sale.deliveryHelperCostTotal = helperCount * helperFeePerUnit * helperUnits;
 
-                // 2. Record Transaction - Entrada (Bruto)
-                appState.transactions.push({
-                    id: Date.now(),
-                    type: 'entrada',
-                    category: 'Venda de Pré-moldados',
-                    amount: sale.total,
-                    date: finalDate,
-                    description: `Recebimento Pedido #${saleId} - ${sale.clientName}`,
-                    account: 'Caixa Principal',
-                    paymentMethod: finalMethod
-                });
+                // 2. Record Transactions
+                finalizePayments.forEach((payment, idx) => {
+                    // Entrada (Bruto)
+                    appState.transactions.push({
+                        id: Date.now() + idx,
+                        saleId: saleId, // Link para a venda
+                        type: 'entrada',
+                        category: 'Venda de Pré-moldados',
+                        amount: payment.amount,
+                        date: finalDate,
+                        description: `Recebimento Pedido #${saleId} (${payment.method}) - ${sale.clientName}`,
+                        account: 'Caixa Principal',
+                        paymentMethod: payment.method
+                    });
 
-                // 3. Record Transaction - Saída (Taxa de Cartão) se houver
-                // Recalcular taxa se o método mudou para cartão
-                if (finalMethod.toLowerCase().includes('cartão')) {
-                    let feePerc = 0;
-                    if (finalMethod.includes('Crédito')) {
-                        // Busca a taxa padrão de 1x se não houver info (simplificado)
-                        feePerc = appState.config.cardFees.credit[0].fee;
-                    } else {
-                        feePerc = appState.config.cardFees.debit;
+                    // Saída (Taxa de Cartão) se houver
+                    if (payment.method.toLowerCase().includes('cartão')) {
+                        let feePerc = 0;
+                        if (payment.method.includes('Crédito')) {
+                            const installments = payment.installments || 1;
+                            const feeConfig = appState.config.cardFees.credit.find(f => f.installments === installments);
+                            feePerc = feeConfig ? feeConfig.fee : appState.config.cardFees.credit[0].fee;
+                        } else {
+                            feePerc = appState.config.cardFees.debit;
+                        }
+                        const feeAmount = payment.amount * (feePerc / 100);
+                        
+                        if (feeAmount > 0) {
+                            sale.fee += feeAmount; // Acumular a taxa na venda
+                            appState.transactions.push({
+                                id: Date.now() + 100 + idx,
+                                saleId: saleId, // Link para a venda
+                                type: 'saida',
+                                category: 'Taxas de Cartão',
+                                amount: feeAmount,
+                                date: finalDate,
+                                description: `Taxa ${payment.method} - Pedido #${saleId}`,
+                                account: 'Caixa Principal',
+                                paymentMethod: payment.method
+                            });
+                        }
                     }
-                    sale.fee = sale.total * (feePerc / 100);
-                    
-                    if (sale.fee > 0) {
-                        appState.transactions.push({
-                            id: Date.now() + 1,
-                            type: 'saida',
-                            category: 'Taxas de Cartão',
-                            amount: sale.fee,
-                            date: finalDate,
-                            description: `Taxa Cartão - Pedido #${saleId}`,
-                            account: 'Caixa Principal',
-                            paymentMethod: finalMethod
-                        });
-                    }
-                }
+                });
 
                 saveData();
                 closeModal();
                 showToast('Venda concluída e pagamento registrado!');
                 renderVendas();
-
-                // Abrir modal de sucesso com opção de baixar recibo
                 openPostSaleSuccessModal(sale);
             };
+        }
+
+        function addFinalizePaymentMethod(total) {
+            const currentTotalPaid = finalizePayments.reduce((acc, p) => acc + p.amount, 0);
+            const remaining = Math.max(0, total - currentTotalPaid);
+            finalizePayments.push({ method: appState.config.paymentMethods[0], amount: remaining });
+            updateFinalizePaymentsUI(total);
+        }
+
+        function removeFinalizePaymentMethod(index, total) {
+            if (finalizePayments.length > 1) {
+                finalizePayments.splice(index, 1);
+                updateFinalizePaymentsUI(total);
+            } else {
+                showToast('Pelo menos uma forma de pagamento é necessária.', 'warning');
+            }
+        }
+
+        function updateFinalizePaymentValue(index, val, total) {
+            finalizePayments[index].amount = parseFloat(val) || 0;
+            updateFinalizePaymentsUI(total, false);
+            
+            const totalPaid = finalizePayments.reduce((acc, p) => acc + p.amount, 0);
+            const elTotalPaid = document.getElementById('finalize-total-paid');
+            if (elTotalPaid) {
+                elTotalPaid.innerText = formatCurrency(totalPaid);
+                elTotalPaid.className = Math.abs(totalPaid - total) < 0.01 ? 'text-sm font-bold text-success' : 'text-sm font-bold text-danger';
+            }
+            const btnConfirm = document.getElementById('btn-confirm-final');
+            if (btnConfirm) {
+                btnConfirm.disabled = Math.abs(totalPaid - total) > 0.01;
+            }
+        }
+
+        function updateFinalizePaymentMethod(index, method, total) {
+            finalizePayments[index].method = method;
+            // Se for crédito, inicializa com 1 parcela se não existir
+            if (method === 'Cartão de Crédito' && !finalizePayments[index].installments) {
+                finalizePayments[index].installments = 1;
+            }
+            updateFinalizePaymentsUI(total);
+        }
+
+        function updateFinalizePaymentInstallments(index, installments, total) {
+            finalizePayments[index].installments = parseInt(installments) || 1;
+            updateFinalizePaymentsUI(total, false);
+        }
+
+        function updateFinalizePaymentsUI(total, fullRender = true) {
+            const container = document.getElementById('finalize-payments-list');
+            if (!container) return;
+
+            const totalPaid = finalizePayments.reduce((acc, p) => acc + p.amount, 0);
+
+            if (fullRender) {
+                container.innerHTML = finalizePayments.map((p, index) => {
+                    const isCredit = p.method === 'Cartão de Crédito';
+                    return `
+                        <div class="flex flex-col gap-2 p-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm animate-fade-in">
+                            <div class="flex items-center gap-3">
+                                <div class="flex-1">
+                                    <label class="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Forma</label>
+                                    <select onchange="updateFinalizePaymentMethod(${index}, this.value, ${total})" class="w-full p-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold">
+                                        ${appState.config.paymentMethods.map(m => `<option value="${m}" ${p.method === m ? 'selected' : ''}>${m}</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div class="w-32">
+                                    <label class="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Valor (R$)</label>
+                                    <input type="number" step="0.01" value="${p.amount}" oninput="updateFinalizePaymentValue(${index}, this.value, ${total})"
+                                        class="w-full p-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold">
+                                </div>
+                                <button onclick="removeFinalizePaymentMethod(${index}, ${total})" class="mt-4 p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 rounded-xl transition-all">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                            ${isCredit ? `
+                                <div class="flex items-center gap-2 px-1 pb-1 animate-fade-in">
+                                    <i data-lucide="credit-card" class="w-3 h-3 text-primary-500"></i>
+                                    <label class="text-[9px] font-black text-slate-400 uppercase tracking-tight">Parcelamento:</label>
+                                    <select onchange="updateFinalizePaymentInstallments(${index}, this.value, ${total})" class="flex-1 p-1.5 bg-primary-50 dark:bg-primary-900/20 border border-primary-100 dark:border-primary-800 rounded-lg outline-none text-[10px] font-bold text-primary-700 dark:text-primary-300">
+                                        ${[1,2,3,4,5,6,7,8,9,10,11,12].map(n => `<option value="${n}" ${p.installments === n ? 'selected' : ''}>${n}x sem juros</option>`).join('')}
+                                    </select>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                }).join('');
+                lucide.createIcons();
+            }
+
+            const elTotalPaid = document.getElementById('finalize-total-paid');
+            if (elTotalPaid) {
+                elTotalPaid.innerText = formatCurrency(totalPaid);
+                elTotalPaid.className = Math.abs(totalPaid - total) < 0.01 ? 'text-sm font-bold text-success' : 'text-sm font-bold text-danger';
+            }
+
+            const btnConfirm = document.getElementById('btn-confirm-final');
+            if (btnConfirm) {
+                btnConfirm.disabled = Math.abs(totalPaid - total) > 0.01;
+            }
         }
 
         function cancelPendingSale(saleId) {
@@ -4555,138 +4951,177 @@
             const subtotal = currentCart.reduce((acc, item) => acc + (item.price * item.qty), 0);
             const total = subtotal - pdvDiscount;
             
+            // Inicializa com um pagamento padrão se estiver vazio
+            if (pdvPayments.length === 0) {
+                pdvPayments = [{ method: appState.config.paymentMethods[0], amount: total }];
+            }
+
             let html = `
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
-                        <h3 class="text-xl font-bold dark:text-white">Finalizar Venda</h3>
+                        <h3 class="text-xl font-bold dark:text-white">Registrar pagamento</h3>
                         <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
                     </div>
                     <div class="mb-6 p-4 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700">
-                        <div class="flex justify-between items-center mb-2">
-                            <span class="text-slate-500">Valor Total</span>
-                            <span class="text-2xl font-black text-primary-600">${formatCurrency(total)}</span>
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-xs text-slate-500 uppercase font-bold tracking-wider">Valor da Venda</span>
+                            <span class="text-xl font-black text-primary-600">${formatCurrency(total)}</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Total Registrado</span>
+                            <span id="pdv-total-paid" class="text-sm font-bold text-slate-700 dark:text-slate-200">${formatCurrency(0)}</span>
                         </div>
                     </div>
+
                     <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium mb-1">Forma de Pagamento</label>
-                            <select id="pdv-final-method" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500" onchange="updateCheckoutUI(${total})">
-                                ${appState.config.paymentMethods.map(m => `<option value="${m}">${m}</option>`).join('')}
-                            </select>
-                        </div>
-                        
-                        <!-- Troco para Dinheiro -->
-                        <div id="pdv-change-calc" class="hidden animate-fade-in">
-                            <label class="block text-sm font-medium mb-1 text-slate-500">Valor Recebido</label>
-                            <input type="number" id="pdv-received" step="0.01" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500" onkeyup="calcChange(${total})">
-                            <div class="mt-2 text-right">
-                                <span class="text-xs text-slate-500">Troco: </span>
-                                <span id="pdv-change-val" class="text-sm font-bold text-success">R$ 0,00</span>
-                            </div>
+                        <div id="pdv-payments-list" class="space-y-3">
+                            <!-- Lista de pagamentos -->
                         </div>
 
-                        <!-- Taxas para Cartão -->
-                        <div id="pdv-card-fees" class="hidden p-4 bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800 rounded-xl animate-fade-in">
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label class="block text-[10px] font-bold text-orange-600 uppercase mb-1">Parcelas</label>
-                                    <select id="pdv-installments" class="w-full p-2 bg-white dark:bg-slate-800 border border-orange-200 dark:border-orange-700 rounded-lg outline-none text-sm" onchange="calcCardFee(${total})">
-                                        <!-- Preenchido via updateCheckoutUI -->
-                                    </select>
-                                </div>
-                                <div class="text-right">
-                                    <label class="block text-[10px] font-bold text-orange-600 uppercase mb-1">Valor Líquido</label>
-                                    <p id="pdv-net-val" class="text-sm font-black text-orange-700 dark:text-orange-400">${formatCurrency(total)}</p>
-                                    <p id="pdv-fee-info" class="text-[9px] text-orange-500 font-bold uppercase"></p>
-                                </div>
-                            </div>
-                        </div>
+                        <button onclick="addPDVPaymentMethod(${total})" class="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl text-slate-400 hover:text-primary-600 hover:border-primary-500 transition-all flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest">
+                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                            Adicionar forma de pagamento
+                        </button>
 
                         <!-- Data de Entrega (Apenas para Pendente) -->
-                        <div id="pdv-delivery-date-container" class="space-y-1">
-                            <label class="block text-sm font-medium mb-1 text-slate-500">Data Prevista de Entrega</label>
-                            <input type="date" id="pdv-delivery-date" value="${new Date(Date.now() + 86400000).toISOString().split('T')[0]}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500">
-                            <p class="text-[10px] text-slate-400 italic">* Necessário apenas para agendamento de entrega.</p>
+                        <div id="pdv-delivery-date-container" class="space-y-1 pt-4 border-t border-slate-100 dark:border-slate-700">
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Data Prevista de Entrega</label>
+                            <input type="date" id="pdv-delivery-date" value="${new Date(Date.now() + 86400000).toISOString().split('T')[0]}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 text-sm font-bold">
+                            <p class="text-[9px] text-slate-400 italic">* Necessário apenas para agendamento de entrega.</p>
                         </div>
                     </div>
+
                     <div class="grid grid-cols-2 gap-3 mt-8">
-                        <button onclick="closeModal()" class="py-3 rounded-xl border border-slate-200 dark:border-slate-700 font-semibold hover:bg-slate-50 dark:hover:bg-slate-700">Voltar</button>
+                        <button onclick="closeModal()" class="py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
+                            Voltar
+                        </button>
                         <div class="flex flex-col gap-2">
-                            <button onclick="confirmSale(${total}, 'completed')" class="py-3 rounded-xl bg-success text-white font-bold hover:brightness-95 shadow-lg shadow-success/20 transition-all active:scale-95 flex items-center justify-center gap-2">
-                                <i data-lucide="check-circle" class="w-5 h-5"></i> Receber Agora
+                            <button id="btn-confirm-sale-now" onclick="confirmSale(${total}, 'completed')" 
+                                class="py-3.5 rounded-2xl bg-success text-white font-black text-xs uppercase tracking-widest hover:brightness-95 shadow-lg shadow-success/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:grayscale">
+                                <i data-lucide="check-circle" class="w-4 h-4"></i> Receber Agora
                             </button>
-                            <button onclick="confirmSale(${total}, 'pending')" class="py-2.5 rounded-xl bg-orange-500 text-white text-xs font-bold hover:brightness-95 shadow-lg shadow-orange-500/20 transition-all active:scale-95 flex items-center justify-center gap-2">
-                                <i data-lucide="truck" class="w-4 h-4"></i> Agendar Entrega (Receber na Entrega)
+                            <button onclick="confirmSale(${total}, 'pending')" 
+                                class="py-2.5 rounded-xl bg-orange-500 text-white font-black text-[10px] uppercase tracking-widest hover:brightness-95 shadow-lg shadow-orange-500/20 transition-all active:scale-95 flex items-center justify-center gap-2">
+                                <i data-lucide="truck" class="w-3.5 h-3.5"></i> Agendar Entrega
                             </button>
                         </div>
                     </div>
                 </div>
             `;
             openModal(html);
-            updateCheckoutUI(total);
+            updatePDVPaymentsUI(total);
         }
 
-        function updateCheckoutUI(total) {
-            const method = document.getElementById('pdv-final-method').value;
-            const changeCalc = document.getElementById('pdv-change-calc');
-            const cardFees = document.getElementById('pdv-card-fees');
-            const installmentSelect = document.getElementById('pdv-installments');
-            
-            changeCalc.classList.toggle('hidden', method !== 'Dinheiro');
-            cardFees.classList.toggle('hidden', !method.toLowerCase().includes('cartão'));
-            
-            if (method.toLowerCase().includes('cartão')) {
-                // Preencher parcelas baseado no tipo de cartão
-                let options = "";
-                if (method.includes('Crédito')) {
-                    appState.config.cardFees.credit.forEach(c => {
-                        options += `<option value="${c.fee}">${c.installments}x (${c.fee}%)</option>`;
-                    });
-                } else {
-                    options = `<option value="${appState.config.cardFees.debit}">1x Débito (${appState.config.cardFees.debit}%)</option>`;
-                }
-                installmentSelect.innerHTML = options;
-                calcCardFee(total);
+        function addPDVPaymentMethod(total) {
+            const currentTotalPaid = pdvPayments.reduce((acc, p) => acc + p.amount, 0);
+            const remaining = Math.max(0, total - currentTotalPaid);
+            pdvPayments.push({ method: appState.config.paymentMethods[0], amount: remaining });
+            updatePDVPaymentsUI(total);
+        }
+
+        function removePDVPaymentMethod(index, total) {
+            if (pdvPayments.length > 1) {
+                pdvPayments.splice(index, 1);
+                updatePDVPaymentsUI(total);
+            } else {
+                showToast('Pelo menos uma forma de pagamento é necessária.', 'warning');
             }
         }
 
-        function calcCardFee(total) {
-            const installmentSelect = document.getElementById('pdv-installments');
-            if (!installmentSelect) return;
+        function updatePDVPaymentValue(index, val, total) {
+            pdvPayments[index].amount = parseFloat(val) || 0;
+            updatePDVPaymentsUI(total, false); // Não renderizar tudo para não perder o foco
             
-            const perc = parseFloat(installmentSelect.value) || 0;
-            const feeVal = total * (perc / 100);
-            const netVal = total - feeVal;
-            
-            document.getElementById('pdv-net-val').innerText = formatCurrency(netVal);
-            document.getElementById('pdv-fee-info').innerText = `Taxa: ${formatCurrency(feeVal)}`;
+            // Mas precisamos atualizar o total pago e o estado do botão
+            const totalPaid = pdvPayments.reduce((acc, p) => acc + p.amount, 0);
+            const elTotalPaid = document.getElementById('pdv-total-paid');
+            if (elTotalPaid) {
+                elTotalPaid.innerText = formatCurrency(totalPaid);
+                elTotalPaid.className = Math.abs(totalPaid - total) < 0.01 ? 'text-sm font-bold text-success' : 'text-sm font-bold text-danger';
+            }
+            const btnConfirm = document.getElementById('btn-confirm-sale-now');
+            if (btnConfirm) {
+                btnConfirm.disabled = Math.abs(totalPaid - total) > 0.01;
+            }
         }
 
-        function calcChange(total) {
-            const received = parseFloat(document.getElementById('pdv-received').value) || 0;
-            const change = received - total;
-            document.getElementById('pdv-change-val').innerText = formatCurrency(Math.max(0, change));
+        function updatePDVPaymentMethod(index, method, total) {
+            pdvPayments[index].method = method;
+            // Se for crédito, inicializa com 1 parcela se não existir
+            if (method === 'Cartão de Crédito' && !pdvPayments[index].installments) {
+                pdvPayments[index].installments = 1;
+            }
+            updatePDVPaymentsUI(total);
         }
+
+        function updatePDVPaymentInstallments(index, installments, total) {
+            pdvPayments[index].installments = parseInt(installments) || 1;
+            updatePDVPaymentsUI(total, false);
+        }
+
+        function updatePDVPaymentsUI(total, fullRender = true) {
+            const container = document.getElementById('pdv-payments-list');
+            if (!container) return;
+
+            const totalPaid = pdvPayments.reduce((acc, p) => acc + p.amount, 0);
+
+            if (fullRender) {
+                container.innerHTML = pdvPayments.map((p, index) => {
+                    const isCredit = p.method === 'Cartão de Crédito';
+                    return `
+                        <div class="flex flex-col gap-2 p-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm animate-fade-in">
+                            <div class="flex items-center gap-3">
+                                <div class="flex-1">
+                                    <label class="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Forma</label>
+                                    <select onchange="updatePDVPaymentMethod(${index}, this.value, ${total})" class="w-full p-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold">
+                                        ${appState.config.paymentMethods.map(m => `<option value="${m}" ${p.method === m ? 'selected' : ''}>${m}</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div class="w-32">
+                                    <label class="block text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Valor (R$)</label>
+                                    <input type="number" step="0.01" value="${p.amount}" oninput="updatePDVPaymentValue(${index}, this.value, ${total})"
+                                        class="w-full p-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold">
+                                </div>
+                                <button onclick="removePDVPaymentMethod(${index}, ${total})" class="mt-4 p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 rounded-xl transition-all">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                            ${isCredit ? `
+                                <div class="flex items-center gap-2 px-1 pb-1 animate-fade-in">
+                                    <i data-lucide="credit-card" class="w-3 h-3 text-primary-500"></i>
+                                    <label class="text-[9px] font-black text-slate-400 uppercase tracking-tight">Parcelamento:</label>
+                                    <select onchange="updatePDVPaymentInstallments(${index}, this.value, ${total})" class="flex-1 p-1.5 bg-primary-50 dark:bg-primary-900/20 border border-primary-100 dark:border-primary-800 rounded-lg outline-none text-[10px] font-bold text-primary-700 dark:text-primary-300">
+                                        ${[1,2,3,4,5,6,7,8,9,10,11,12].map(n => `<option value="${n}" ${p.installments === n ? 'selected' : ''}>${n}x sem juros</option>`).join('')}
+                                    </select>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                }).join('');
+                lucide.createIcons();
+            }
+
+            const elTotalPaid = document.getElementById('pdv-total-paid');
+            if (elTotalPaid) {
+                elTotalPaid.innerText = formatCurrency(totalPaid);
+                elTotalPaid.className = Math.abs(totalPaid - total) < 0.01 ? 'text-sm font-bold text-success' : 'text-sm font-bold text-danger';
+            }
+
+            const btnConfirm = document.getElementById('btn-confirm-sale-now');
+            if (btnConfirm) {
+                btnConfirm.disabled = Math.abs(totalPaid - total) > 0.01;
+            }
+        }
+
 
         function confirmSale(total, status = 'completed') {
             if (currentCart.length === 0) return;
             
-            const method = document.getElementById('pdv-final-method').value;
             const saleId = Math.floor(100000 + Math.random() * 900000); 
             
-            // Taxas de Cartão
-            let feeAmount = 0;
-            let installments = 1;
-            if (method.toLowerCase().includes('cartão')) {
-                const installmentSelect = document.getElementById('pdv-installments');
-                const perc = parseFloat(installmentSelect.value) || 0;
-                installments = installmentSelect.options[installmentSelect.selectedIndex].text.split('x')[0];
-                feeAmount = total * (perc / 100);
-            }
-
-            // 1. Record Sale
+            // 1. Prepare Sale Object
             const sale = {
                 id: saleId,
                 clientId: pdvClient ? pdvClient.id : 0,
@@ -4695,13 +5130,16 @@
                 deliveryDate: status === 'pending' ? document.getElementById('pdv-delivery-date').value : null,
                 items: currentCart.map(i => ({ ...i })),
                 total: total,
-                paymentMethod: method,
-                installments: installments,
+                payments: pdvPayments.map(p => ({ ...p })), // Armazena múltiplos pagamentos
+                fee: 0,
                 discount: pdvDiscount,
-                fee: feeAmount,
                 status: status, // 'completed' or 'pending'
                 employeeId: currentUser.role === 'Vendedor' ? 1 : null 
             };
+
+            // Para manter compatibilidade com relatórios que usam paymentMethod (campo único)
+            // Usamos a primeira forma de pagamento ou uma string combinada
+            sale.paymentMethod = pdvPayments.length === 1 ? pdvPayments[0].method : 'Múltiplos';
 
             if (status === 'pending') {
                 const first = sale.items[0];
@@ -4718,35 +5156,54 @@
                 sale.deliveryHelperUnits = 0;
                 sale.deliveryHelperCostTotal = 0;
             }
+            
             appState.sales.push(sale);
 
             // 2. Record Transactions ONLY if completed now
             if (status === 'completed') {
-                // Entrada (Bruto)
-                appState.transactions.push({
-                    id: Date.now(),
-                    type: 'entrada',
-                    category: 'Venda de Pré-moldados',
-                    amount: total,
-                    date: sale.date,
-                    description: `Venda #${saleId} - ${sale.clientName}`,
-                    account: 'Caixa Principal',
-                    paymentMethod: method
-                });
-
-                // Saída (Taxa de Cartão) se houver
-                if (feeAmount > 0) {
+                sale.fee = 0;
+                pdvPayments.forEach((payment, idx) => {
+                    // Entrada (Bruto)
                     appState.transactions.push({
-                        id: Date.now() + 1,
-                        type: 'saida',
-                        category: 'Taxas de Cartão',
-                        amount: feeAmount,
+                        id: Date.now() + idx,
+                        saleId: saleId, // Link para a venda
+                        type: 'entrada',
+                        category: 'Venda de Pré-moldados',
+                        amount: payment.amount,
                         date: sale.date,
-                        description: `Taxa Cartão - Venda #${saleId}`,
+                        description: `Venda #${saleId} (${payment.method}) - ${sale.clientName}`,
                         account: 'Caixa Principal',
-                        paymentMethod: method
+                        paymentMethod: payment.method
                     });
-                }
+
+                    // Saída (Taxa de Cartão) se houver
+                    if (payment.method.toLowerCase().includes('cartão')) {
+                        let feePerc = 0;
+                        if (payment.method.includes('Crédito')) {
+                            const installments = payment.installments || 1;
+                            const feeConfig = appState.config.cardFees.credit.find(f => f.installments === installments);
+                            feePerc = feeConfig ? feeConfig.fee : appState.config.cardFees.credit[0].fee;
+                        } else {
+                            feePerc = appState.config.cardFees.debit;
+                        }
+                        const feeAmount = payment.amount * (feePerc / 100);
+                        
+                        if (feeAmount > 0) {
+                            sale.fee += feeAmount;
+                            appState.transactions.push({
+                                id: Date.now() + 100 + idx,
+                                saleId: saleId, // Link para a venda
+                                type: 'saida',
+                                category: 'Taxas de Cartão',
+                                amount: feeAmount,
+                                date: sale.date,
+                                description: `Taxa ${payment.method} - Venda #${saleId}`,
+                                account: 'Caixa Principal',
+                                paymentMethod: payment.method
+                            });
+                        }
+                    }
+                });
             }
 
             // 3. Update Inventory (Stock is reserved anyway)
@@ -4759,24 +5216,21 @@
 
             saveData();
             
-            // 4. Clear Cart
+            // 4. Clear State
             currentCart = [];
             pdvClient = null;
             pdvDiscount = 0;
+            pdvPayments = []; // Limpa os pagamentos
             updatePDVCart();
             
             if (status === 'completed') {
-                showToast(feeAmount > 0 ? `Venda finalizada! Líquido: ${formatCurrency(total - feeAmount)}` : 'Venda finalizada!');
+                showToast('Venda finalizada com sucesso!');
                 openPostSaleSuccessModal(sale);
             } else {
                 showToast('Pedido agendado para entrega!', 'success');
                 closeModal();
                 renderVendas();
             }
-            
-            currentCart = [];
-            pdvDiscount = 0;
-            pdvClient = null;
         }
 
         let currentSuccessSale = null;
@@ -4958,7 +5412,10 @@
                 doc.text('MÉTODO DE PAGAMENTO', 15, finalY);
                 doc.setFont(undefined, 'normal');
                 doc.setTextColor(darkText[0], darkText[1], darkText[2]);
-                doc.text(`${sale.paymentMethod.toUpperCase()}${sale.installments > 1 ? ` (${sale.installments}X)` : ''}`, 15, finalY + 5);
+                const paymentText = (sale.payments && sale.payments.length > 0) 
+                    ? sale.payments.map(p => `${p.method} (${formatCurrency(p.amount)})`).join(' + ')
+                    : (sale.paymentMethod || 'NÃO INFORMADO');
+                doc.text(`${paymentText.toUpperCase()}${sale.installments > 1 ? ` (${sale.installments}X)` : ''}`, 15, finalY + 5);
 
                 // Box de Resumo (Direita)
                 const summaryX = 135;
@@ -5268,6 +5725,9 @@
 
             const totalIn = entradas.reduce((acc, t) => acc + (t.amount || 0), 0);
             const totalOut = saidas.reduce((acc, t) => acc + (t.amount || 0), 0);
+            
+            // Separar taxas de cartão para destaque
+            const totalFees = saidas.filter(t => t.category === 'Taxas de Cartão').reduce((acc, t) => acc + (t.amount || 0), 0);
             const net = totalIn - totalOut;
 
             const entradasByCategory = groupSum(entradas, t => t.category || 'Sem categoria', t => t.amount);
@@ -5281,12 +5741,24 @@
             const pendingSalesCount = appState.sales.filter(s => s.status === 'pending').length;
             const salesCount = completedSales.length;
             const salesGross = completedSales.reduce((acc, s) => acc + (s.total || 0), 0);
+            
+            // Calcular taxas específicas das vendas do período (para faturamento líquido)
+            const periodSaleIds = completedSales.map(s => s.id);
+            const salesFees = saidas
+                .filter(t => t.category === 'Taxas de Cartão' && (
+                    (t.saleId && periodSaleIds.includes(t.saleId)) || 
+                    (t.description.includes('#') && periodSaleIds.some(id => t.description.includes('#' + id)))
+                ))
+                .reduce((acc, t) => acc + (t.amount || 0), 0);
+            const salesNet = salesGross - salesFees;
+
             const salesAvg = salesCount > 0 ? (salesGross / salesCount) : 0;
             const itemsSold = completedSales.reduce((acc, s) => acc + (s.items || []).reduce((sum, i) => sum + (i.qty || 0), 0), 0);
 
             return {
                 totalIn,
                 totalOut,
+                totalFees, // Adicionado
                 net,
                 entradasByCategory,
                 saidasByCategory,
@@ -5294,6 +5766,7 @@
                 byPayment,
                 salesCount,
                 salesGross,
+                salesNet, // Adicionado
                 salesAvg,
                 itemsSold,
                 pendingSalesCount
@@ -5306,29 +5779,39 @@
 
             return `
                 <div class="space-y-6">
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
                         <div class="p-4 bg-success/10 rounded-2xl border border-success/20">
                             <p class="text-[10px] font-black text-success uppercase tracking-widest mb-1">Entradas</p>
                             <p class="text-lg font-black text-success">${formatCurrency(dre.totalIn)}</p>
                         </div>
+                        <div class="p-4 bg-red-50 dark:bg-red-900/10 rounded-2xl border border-red-100 dark:border-red-900/20">
+                            <p class="text-[10px] font-black text-red-500 uppercase tracking-widest mb-1">Taxas Cartão</p>
+                            <p class="text-lg font-black text-red-600">-${formatCurrency(dre.totalFees)}</p>
+                        </div>
                         <div class="p-4 bg-danger/10 rounded-2xl border border-danger/20">
-                            <p class="text-[10px] font-black text-danger uppercase tracking-widest mb-1">Saídas</p>
-                            <p class="text-lg font-black text-danger">${formatCurrency(dre.totalOut)}</p>
+                            <p class="text-[10px] font-black text-danger uppercase tracking-widest mb-1">Outras Saídas</p>
+                            <p class="text-lg font-black text-danger">${formatCurrency(dre.totalOut - dre.totalFees)}</p>
                         </div>
                         <div class="p-4 bg-primary-50 dark:bg-primary-900/20 rounded-2xl border border-primary-100 dark:border-primary-800">
-                            <p class="text-[10px] font-black text-primary-600 uppercase tracking-widest mb-1">Resultado</p>
+                            <p class="text-[10px] font-black text-primary-600 uppercase tracking-widest mb-1">Lucro Líquido</p>
                             <p class="text-lg font-black ${dre.net >= 0 ? 'text-primary-600' : 'text-danger'}">${formatCurrency(dre.net)}</p>
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
                         <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
-                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Vendas</p>
-                            <p class="text-xl font-black text-slate-900 dark:text-white">${dre.salesCount}</p>
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Vendas (Bruto)</p>
+                            <p class="text-sm font-black text-slate-900 dark:text-white">${formatCurrency(dre.salesGross)}</p>
+                            <p class="text-[9px] text-slate-400 font-bold uppercase mt-1">${dre.salesCount} pedidos</p>
                         </div>
                         <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
-                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Preço Médio</p>
-                            <p class="text-sm font-black text-primary-600">${formatCurrency(dre.salesAvg)}</p>
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Vendas (Líquido)</p>
+                            <p class="text-sm font-black text-primary-600">${formatCurrency(dre.salesNet)}</p>
+                            <p class="text-[9px] text-red-500 font-bold uppercase mt-1">Taxas: -${formatCurrency(dre.salesGross - dre.salesNet)}</p>
+                        </div>
+                        <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ticket Médio</p>
+                            <p class="text-sm font-black text-slate-900 dark:text-white">${formatCurrency(dre.salesAvg)}</p>
                         </div>
                         <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
                             <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Itens Vendidos</p>
@@ -6009,7 +6492,7 @@
                     const product = appState.inventory.find(p => p.id === item.productId);
                     return itemAcc + (product ? (product.costPrice * item.qty) : 0);
                 }, 0);
-                return acc + materialsCost + (s.deliveryHelperCostTotal || 0);
+                return acc + materialsCost + (s.deliveryHelperCostTotal || 0) + (s.fee || 0);
             }, 0);
 
             const contributionMargin = totalRevenue - totalVariableCosts;
@@ -6793,6 +7276,22 @@
         // --- APP INITIALIZATION ---
         function initApp() {
             if (!currentUser) return;
+
+            // Migração: Popular sale.fee a partir das transações se estiver faltando
+            if (Array.isArray(appState.sales)) {
+                appState.sales.forEach(s => {
+                    if (s.status === 'completed' && (s.fee === undefined || s.fee === 0)) {
+                        const fees = appState.transactions
+                            .filter(t => t.saleId === s.id && t.type === 'saida' && t.category === 'Taxas de Cartão')
+                            .reduce((acc, t) => acc + t.amount, 0);
+                        if (fees > 0) {
+                            s.fee = fees;
+                        } else if (s.fee === undefined) {
+                            s.fee = 0;
+                        }
+                    }
+                });
+            }
             
             document.getElementById('login-screen').classList.add('hidden');
             document.getElementById('main-app').classList.remove('hidden');
