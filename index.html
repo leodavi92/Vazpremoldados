@@ -289,8 +289,6 @@
     <!-- Scripts -->
     <script>
         // --- FIREBASE CONFIGURATION ---
-        // VOCÊ PRECISA CRIAR UM PROJETO NO FIREBASE (https://console.firebase.google.com/)
-        // E SUBSTITUIR O OBJETO ABAIXO PELAS CONFIGURAÇÕES DO SEU PROJETO.
         const firebaseConfig = { 
             apiKey: "AIzaSyA3dlCGsZkTTnZ06G5qYxhm1yFqYBPYU20", 
             authDomain: "app-vaz-pre-moldados.firebaseapp.com", 
@@ -301,20 +299,25 @@
             measurementId: "G-0NCEJV13F2"
         };
 
+        // --- ENVIRONMENT DETECTION ---
+        // Se a URL tiver ?env=test, usa o ambiente de teste. Caso contrário, produção.
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentEnv = urlParams.get('env') === 'test' ? 'test' : 'prod';
+        const dbDocName = currentEnv === 'test' ? 'globalState_test' : 'globalState_prod';
+
         // Inicializar Firebase
         let db = null;
         let auth = null;
         let firebaseReady = false;
+        let cloudSyncEnabled = false; // Só ativa após migração ou se já houver dados na nuvem
 
         try {
-            if (firebaseConfig.apiKey !== "COLE_AQUI_SUA_API_KEY") {
+            if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "COLE_AQUI_SUA_API_KEY") {
                 firebase.initializeApp(firebaseConfig);
                 db = firebase.firestore();
                 auth = firebase.auth();
                 firebaseReady = true;
-                console.log("Firebase conectado!");
-            } else {
-                console.warn("Firebase não configurado. O app funcionará apenas localmente (localStorage) até você configurar as chaves no código.");
+                console.log(`Firebase conectado no ambiente: ${currentEnv.toUpperCase()}`);
             }
         } catch (e) {
             console.error("Erro ao inicializar Firebase:", e);
@@ -576,12 +579,11 @@
                 console.warn("Erro ao salvar no localStorage");
             }
 
-            // Salvar no Firebase se configurado
-            if (firebaseReady && db) {
-                db.collection('appData').doc('globalState').set(appState)
+            // Salvar no Firebase se configurado e habilitado
+            if (firebaseReady && db && cloudSyncEnabled) {
+                db.collection('appData').doc(dbDocName).set(appState)
                     .catch(err => {
                         console.error("Erro ao sincronizar com Firebase:", err);
-                        showToast("Erro de sincronização com a nuvem", "error");
                     });
             }
         }
@@ -7495,9 +7497,72 @@
                 `;
             }
 
+            if (configTab === 'sincronizacao') {
+                return `
+                    <div class="space-y-6 animate-fade-in">
+                        <button onclick="switchConfigTab('menu')" class="flex items-center gap-2 text-primary-600 font-black text-[10px] uppercase tracking-widest mb-4">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i> Voltar ao Menu
+                        </button>
+                        
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700">
+                            <h3 class="font-black mb-2 flex items-center gap-2 uppercase tracking-tighter text-slate-900 dark:text-white">
+                                <i data-lucide="cloud" class="w-5 h-5 text-primary-600"></i>
+                                Sincronização Nuvem
+                            </h3>
+                            <p class="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-6">Ambiente Atual: <span class="text-primary-600">${currentEnv.toUpperCase()}</span></p>
+
+                            <div class="space-y-4">
+                                <div class="p-4 rounded-2xl border ${cloudSyncEnabled ? 'bg-green-50 border-green-100 text-green-700' : 'bg-amber-50 border-amber-100 text-amber-700'}">
+                                    <div class="flex items-center gap-3 mb-2">
+                                        <i data-lucide="${cloudSyncEnabled ? 'check-circle' : 'alert-circle'}" class="w-5 h-5"></i>
+                                        <p class="text-xs font-black uppercase tracking-tight">Status: ${cloudSyncEnabled ? 'Sincronizado' : 'Apenas Local'}</p>
+                                    </div>
+                                    <p class="text-[10px] font-bold leading-relaxed">
+                                        ${cloudSyncEnabled 
+                                            ? 'Seu app está conectado à nuvem. Todas as alterações são salvas automaticamente e compartilhadas entre dispositivos.' 
+                                            : 'Seu app está rodando apenas com dados locais. Para compartilhar dados entre celulares, você precisa realizar a migração inicial.'}
+                                    </p>
+                                </div>
+
+                                ${!cloudSyncEnabled ? `
+                                    <div class="p-6 bg-red-50 border border-red-100 rounded-3xl">
+                                        <h4 class="text-xs font-black text-red-600 uppercase tracking-tight mb-2">Zona de Migração</h4>
+                                        <p class="text-[10px] text-red-500 font-bold mb-4">
+                                            ⚠️ Use este botão apenas no celular que contém os dados REAIS da empresa. 
+                                            Isso enviará seus dados locais para o ambiente <span class="font-black">${currentEnv.toUpperCase()}</span> na nuvem.
+                                        </p>
+                                        <button onclick="startManualMigration()" class="w-full py-4 bg-red-600 text-white font-black rounded-2xl hover:bg-red-700 shadow-lg shadow-red-500/20 transition-all active:scale-95 uppercase text-xs tracking-widest">
+                                            Subir Dados Reais para a Nuvem Agora
+                                        </button>
+                                    </div>
+                                ` : `
+                                    <div class="p-6 bg-slate-50 dark:bg-slate-700/50 border border-slate-100 dark:border-slate-700 rounded-3xl text-center">
+                                        <i data-lucide="cloud-off" class="w-8 h-8 text-slate-300 mx-auto mb-3"></i>
+                                        <p class="text-xs font-black text-slate-400 uppercase tracking-tight">O sincronismo já está ativo.</p>
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
             // MENU PRINCIPAL DE CONFIGURAÇÕES
             return `
                 <div class="grid grid-cols-1 gap-3 animate-fade-in">
+                    <button onclick="switchConfigTab('sincronizacao')" class="w-full p-5 bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-between group hover:border-primary-500 transition-all active:scale-[0.98]">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 ${cloudSyncEnabled ? 'bg-green-50 text-green-600' : 'bg-primary-50 text-primary-600'} rounded-2xl flex items-center justify-center">
+                                <i data-lucide="cloud" class="w-6 h-6"></i>
+                            </div>
+                            <div class="text-left">
+                                <h4 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">Sincronização Nuvem</h4>
+                                <p class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Status: ${cloudSyncEnabled ? 'Ativo' : 'Pendente'}</p>
+                            </div>
+                        </div>
+                        <i data-lucide="chevron-right" class="w-5 h-5 text-slate-300 group-hover:text-primary-500 transition-all"></i>
+                    </button>
+
                     <button onclick="switchConfigTab('empresa')" class="w-full p-5 bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-between group hover:border-primary-500 transition-all active:scale-[0.98]">
                         <div class="flex items-center gap-4">
                             <div class="w-12 h-12 bg-primary-50 dark:bg-primary-900/20 text-primary-600 rounded-2xl flex items-center justify-center">
@@ -7598,6 +7663,30 @@
             saveData();
             showToast('Configurações salvas!');
             switchConfigTab('menu');
+        }
+
+        function startManualMigration() {
+            if (!firebaseReady || !db) {
+                showToast("Firebase não está conectado.", "error");
+                return;
+            }
+
+            const confirmMsg = `Você está prestes a subir os dados locais para o ambiente ${currentEnv.toUpperCase()}. Isso substituirá qualquer dado que já exista na nuvem neste ambiente. Tem certeza?`;
+            
+            if (confirm(confirmMsg)) {
+                showToast("Iniciando migração...");
+                
+                db.collection('appData').doc(dbDocName).set(appState)
+                    .then(() => {
+                        cloudSyncEnabled = true;
+                        showToast("Migração concluída com sucesso!");
+                        renderConfig();
+                    })
+                    .catch(err => {
+                        console.error("Erro na migração:", err);
+                        showToast("Falha na migração. Verifique sua conexão.", "error");
+                    });
+            }
         }
 
         function saveCardFees() {
@@ -7977,31 +8066,27 @@
         function initApp() {
             if (!currentUser) return;
 
-            // --- Lógica do Firebase ---
+            // --- Lógica do Firebase com Ambientes ---
             if (firebaseReady && db) {
-                // Ouvinte em tempo real para sincronismo entre dispositivos
-                db.collection('appData').doc('globalState').onSnapshot((doc) => {
+                // Ouvinte em tempo real no documento do ambiente correto
+                db.collection('appData').doc(dbDocName).onSnapshot((doc) => {
                     if (doc.exists) {
                         const cloudData = doc.data();
+                        // Se detectarmos dados na nuvem, ativamos o sincronismo
+                        cloudSyncEnabled = true;
+                        
                         // Atualiza o estado local com os dados da nuvem
                         appState = cloudData;
-                        // Salva localmente como backup
                         localStorage.setItem('financeProData', JSON.stringify(appState));
-                        // Atualiza a tela se estiver logado
                         if (currentUser) renderContent();
                     } else {
-                        // Se não existe na nuvem, mas temos localmente, migramos
-                        const localData = localStorage.getItem('financeProData');
-                        if (localData) {
-                            console.log("Migrando dados locais para o Firebase...");
-                            db.collection('appData').doc('globalState').set(JSON.parse(localData))
-                                .then(() => console.log("Migração concluída!"))
-                                .catch(err => console.error("Erro na migração:", err));
-                        }
+                        // Se não existe na nuvem, o sincronismo fica desativado
+                        // Isso protege os dados locais de serem sobrescritos por um documento vazio
+                        cloudSyncEnabled = false;
+                        console.log(`Ambiente ${currentEnv} aguardando migração ou novos dados.`);
                     }
                 }, (err) => {
                     console.error("Erro no ouvinte do Firebase:", err);
-                    showToast("Erro de conexão em tempo real", "error");
                 });
             }
 
