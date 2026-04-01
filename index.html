@@ -306,7 +306,7 @@
                 loginPassword: '123456',
                 loginHintText: 'Entre com o acesso configurado pela empresa.',
                 categories: ['Matéria-Prima', 'Ferragens', 'Produtos Acabados', 'Insumos / Aditivos', 'Equipamentos / EPIs', 'Manutenção', 'Outros'],
-                expenseCategories: ['Compra de Matéria-Prima', 'Compra de Ferragens', 'Manutenção de Máquinas', 'Energia Elétrica', 'Salários / Encargos', 'Impostos', 'Fretes / Combustível', 'Taxas de Cartão'],
+                expenseCategories: ['Compra de Matéria-Prima', 'Compra de Ferragens', 'Manutenção de Máquinas', 'Energia Elétrica', 'Salários / Encargos', 'Impostos', 'Fretes / Combustível', 'Taxas de Cartão', 'Pagamento de Ajudante'],
                 incomeCategories: ['Venda de Pré-moldados', 'Serviços de Instalação', 'Venda de Sucata', 'Outros'],
                 paymentMethods: ['Dinheiro', 'PIX', 'Cartão de Crédito', 'Cartão de Débito', 'Boleto'],
                 cardFees: {
@@ -2162,6 +2162,7 @@
                         
                         const totalGross = saleGroup.filter(x => x.type === 'entrada').reduce((acc, x) => acc + x.amount, 0);
                         const totalFees = saleGroup.filter(x => x.type === 'saida' && x.category === 'Taxas de Cartão').reduce((acc, x) => acc + x.amount, 0);
+                        const totalHelper = saleGroup.filter(x => x.type === 'saida' && (x.category === 'Pagamento de Ajudante' || x.isHelperPayment)).reduce((acc, x) => acc + x.amount, 0);
                         
                         groupedTransactions.push({
                             ...mainEntry,
@@ -2169,6 +2170,7 @@
                             isGroup: true,
                             amount: totalGross,
                             fees: totalFees,
+                            helperCost: totalHelper,
                             description: `Venda — ${sale ? sale.clientName : (mainEntry.description.split(' - ')[1] || 'Consumidor Final')}`
                         });
                         processedSaleIds.add(t.saleId);
@@ -2275,6 +2277,7 @@
                         
                         const totalGross = saleGroup.filter(x => x.type === 'entrada').reduce((acc, x) => acc + x.amount, 0);
                         const totalFees = saleGroup.filter(x => x.type === 'saida' && x.category === 'Taxas de Cartão').reduce((acc, x) => acc + x.amount, 0);
+                        const totalHelper = saleGroup.filter(x => x.type === 'saida' && (x.category === 'Pagamento de Ajudante' || x.isHelperPayment)).reduce((acc, x) => acc + x.amount, 0);
                         
                         groupedTransactions.push({
                             ...mainEntry,
@@ -2282,6 +2285,7 @@
                             isGroup: true,
                             amount: totalGross,
                             fees: totalFees,
+                            helperCost: totalHelper,
                             description: `Venda — ${sale ? sale.clientName : (mainEntry.description.split(' - ')[1] || 'Consumidor Final')}`
                         });
                         processedSaleIds.add(t.saleId);
@@ -2318,6 +2322,11 @@
             // Se for um grupo de venda, usamos a função específica de detalhes
             const clickAction = t.isGroup ? `openSaleTransactionDetails(${t.saleId})` : `openTransactionDetails(${t.id})`;
 
+            // Lógica para Pagamento de Ajudante
+            const isHelper = t.category === 'Pagamento de Ajudante' || t.isHelperPayment;
+            const title = isHelper ? (t.helperName || 'Ajudante não informado') : t.description;
+            const titleColorClass = isHelper ? 'text-red-600' : 'text-slate-900 dark:text-white';
+
             return `
                 <div onclick="${clickAction}" class="p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-all cursor-pointer group active:bg-slate-100">
                     <div class="flex items-center gap-4 min-w-0">
@@ -2325,17 +2334,18 @@
                             <i data-lucide="${isEntry ? 'arrow-down-left' : 'arrow-up-right'}" class="w-5 h-5"></i>
                         </div>
                         <div class="min-w-0">
-                            <h4 class="text-sm font-bold text-slate-900 dark:text-white truncate uppercase tracking-tight">${t.description}</h4>
+                            <h4 class="text-sm font-bold ${titleColorClass} truncate uppercase tracking-tight">${title}</h4>
                             <p class="text-[10px] text-slate-500 font-medium uppercase">${t.category} • ${day}/${month}</p>
+                            ${isHelper ? `<p class="text-[9px] text-slate-400 italic mt-0.5">Ref: Venda #${t.saleId}</p>` : ''}
                         </div>
                     </div>
                     <div class="text-right shrink-0">
                         <p class="text-sm font-black ${isEntry ? 'text-green-600' : 'text-red-600'}">
                             ${isEntry ? '+' : '-'} ${formatCurrency(t.amount)}
                         </p>
-                        ${t.isGroup && t.fees > 0 ? `
-                            <p class="text-[9px] font-bold text-red-500 mt-0.5">
-                                TAXAS: -${formatCurrency(t.fees)}
+                        ${t.isGroup && (t.fees > 0 || t.helperCost > 0) ? `
+                            <p class="text-[9px] font-black text-red-500 mt-0.5 uppercase tracking-widest">
+                                Custo com operação
                             </p>
                         ` : ''}
                     </div>
@@ -2352,10 +2362,12 @@
             );
             const totalGross = saleGroup.filter(t => t.type === 'entrada').reduce((acc, t) => acc + t.amount, 0);
             const totalFees = saleGroup.filter(t => t.type === 'saida' && t.category === 'Taxas de Cartão').reduce((acc, t) => acc + t.amount, 0);
-            const netAmount = totalGross - totalFees;
+            const totalHelper = saleGroup.filter(t => t.type === 'saida' && (t.category === 'Pagamento de Ajudante' || t.isHelperPayment)).reduce((acc, t) => acc + t.amount, 0);
+            const netAmount = totalGross - totalFees - totalHelper;
 
             const payments = saleGroup.filter(t => t.type === 'entrada');
             const feesList = saleGroup.filter(t => t.type === 'saida' && t.category === 'Taxas de Cartão');
+            const helperList = saleGroup.filter(t => t.type === 'saida' && (t.category === 'Pagamento de Ajudante' || t.isHelperPayment));
 
             let html = `
                 <div class="p-6">
@@ -2389,23 +2401,25 @@
                             </div>
                         </div>
 
-                        <!-- Taxas -->
-                        ${feesList.length > 0 ? `
+                        <!-- Taxas e Custos -->
+                        ${(feesList.length > 0 || helperList.length > 0) ? `
                             <div class="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl overflow-hidden shadow-sm">
                                 <div class="px-4 py-3 bg-red-50/50 dark:bg-red-900/10 border-b border-red-100 dark:border-red-900/20">
-                                    <h4 class="text-[10px] font-black text-red-500 uppercase tracking-widest">Custos Financeiros (Taxas)</h4>
+                                    <h4 class="text-[10px] font-black text-red-500 uppercase tracking-widest">Custos com Operação</h4>
                                 </div>
                                 <div class="divide-y divide-slate-50 dark:divide-slate-700/50">
                                     ${feesList.map(f => `
                                         <div class="px-4 py-3 flex justify-between items-center">
-                                            <span class="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">${f.description.split(' - ')[0]}</span>
+                                            <span class="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">Taxa Cartão</span>
                                             <span class="text-xs font-black text-red-600">-${formatCurrency(f.amount)}</span>
                                         </div>
                                     `).join('')}
-                                    <div class="px-4 py-3 bg-slate-50/50 dark:bg-slate-700/30 flex justify-between items-center font-black">
-                                        <span class="text-[10px] text-slate-500 uppercase">Total de Taxas</span>
-                                        <span class="text-xs text-red-600">-${formatCurrency(totalFees)}</span>
-                                    </div>
+                                    ${helperList.map(h => `
+                                        <div class="px-4 py-3 flex justify-between items-center">
+                                            <span class="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">Ajudante: ${h.helperName || 'N/A'}</span>
+                                            <span class="text-xs font-black text-red-600">-${formatCurrency(h.amount)}</span>
+                                        </div>
+                                    `).join('')}
                                 </div>
                             </div>
                         ` : ''}
@@ -2413,7 +2427,7 @@
                         <!-- Valor Líquido -->
                         <div class="bg-green-600 rounded-2xl p-4 text-white shadow-lg shadow-green-600/20 flex justify-between items-center">
                             <div>
-                                <p class="text-[9px] font-black uppercase tracking-widest opacity-80">Valor Líquido Recebido</p>
+                                <p class="text-[9px] font-black uppercase tracking-widest opacity-80">Valor Líquido da Operação</p>
                                 <h3 class="text-xl font-black">${formatCurrency(netAmount)}</h3>
                             </div>
                             <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
@@ -2433,6 +2447,91 @@
                 </div>
             `;
             openModal(html);
+        }
+
+        function openSaleDetailsModal(saleId) {
+            const sale = appState.sales.find(s => s.id === saleId);
+            if (!sale) return;
+
+            // No Histórico de Venda, mostramos os detalhes operacionais (produtos, datas)
+            // No Fluxo de Caixa, continuamos chamando o detalhamento financeiro
+            let html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-black dark:text-white uppercase tracking-tighter">Detalhes do Pedido #${sale.id}</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-all">
+                            <i data-lucide="x" class="w-5 h-5 text-slate-400"></i>
+                        </button>
+                    </div>
+
+                    <!-- Informações do Cliente -->
+                    <div class="bg-primary-50 dark:bg-primary-900/10 rounded-3xl p-6 mb-6 border border-primary-100 dark:border-primary-800/30">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 bg-primary-600 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-primary-600/20">
+                                <i data-lucide="user" class="w-6 h-6"></i>
+                            </div>
+                            <div>
+                                <p class="text-[10px] font-black text-primary-600 uppercase tracking-widest mb-0.5">Cliente</p>
+                                <h2 class="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight leading-none">${sale.clientName}</h2>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cronograma de Datas -->
+                    <div class="grid grid-cols-3 gap-3 mb-6">
+                        <div class="bg-slate-50 dark:bg-slate-700/50 p-3 rounded-2xl border border-slate-100 dark:border-slate-600">
+                            <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Data Venda</p>
+                            <p class="text-[10px] font-black text-slate-700 dark:text-slate-200">${formatDate(sale.orderDate || (sale.status === 'completed' ? '---' : sale.date))}</p>
+                        </div>
+                        <div class="bg-orange-50 dark:bg-orange-900/10 p-3 rounded-2xl border border-orange-100 dark:border-orange-800/30">
+                            <p class="text-[8px] font-black text-orange-600 uppercase tracking-widest mb-1">Agendamento</p>
+                            <p class="text-[10px] font-black text-orange-700 dark:text-orange-300">${sale.deliveryDate ? formatDate(sale.deliveryDate) : 'Recebido Agora'}</p>
+                        </div>
+                        <div class="bg-green-50 dark:bg-green-900/10 p-3 rounded-2xl border border-green-100 dark:border-green-800/30">
+                            <p class="text-[8px] font-black text-green-600 uppercase tracking-widest mb-1">Data Entrega</p>
+                            <p class="text-[10px] font-black text-green-700 dark:text-green-300">${sale.status === 'completed' ? formatDate(sale.date) : 'Pendente'}</p>
+                        </div>
+                    </div>
+
+                    <!-- Lista de Produtos -->
+                    <div class="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-3xl overflow-hidden mb-6 shadow-sm">
+                        <div class="px-5 py-3 bg-slate-50 dark:bg-slate-700/50 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+                            <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Itens do Pedido</h4>
+                            <span class="text-[10px] font-black text-primary-600 uppercase bg-primary-50 dark:bg-primary-900/20 px-2 py-0.5 rounded-full">${sale.items?.length || 0} PRODUTOS</span>
+                        </div>
+                        <div class="divide-y divide-slate-50 dark:divide-slate-700/50 max-h-[250px] overflow-y-auto">
+                            ${sale.items?.map(item => `
+                                <div class="px-5 py-4">
+                                    <div class="flex justify-between items-start mb-1">
+                                        <h5 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight leading-tight">${item.name}</h5>
+                                        <span class="text-sm font-black text-primary-600">${formatCurrency(item.total)}</span>
+                                    </div>
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-[10px] font-bold text-slate-400 uppercase">Qtd: <span class="text-slate-700 dark:text-slate-300">${item.qty} ${item.isMeter ? 'm' : 'un'}</span></span>
+                                        ${item.isMeter ? `<span class="text-[10px] font-bold text-slate-400 uppercase">Peças: <span class="text-slate-700 dark:text-slate-300">${item.units || 1}</span></span>` : ''}
+                                        <span class="text-[10px] font-bold text-slate-400 uppercase">Un: <span class="text-slate-700 dark:text-slate-300">${formatCurrency(item.price)}</span></span>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="px-5 py-4 bg-slate-50/50 dark:bg-slate-700/30 flex justify-between items-center border-t border-slate-100 dark:border-slate-700">
+                            <span class="text-xs font-black text-slate-500 uppercase">Total Geral</span>
+                            <span class="text-lg font-black text-primary-600">${formatCurrency(sale.total)}</span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <button onclick="reprintReceipt(${sale.id})" class="flex items-center justify-center gap-2 py-4 bg-primary-600 text-white font-black rounded-2xl hover:bg-primary-700 transition-all active:scale-95 uppercase text-[10px] tracking-widest shadow-lg shadow-primary-500/20">
+                            <i data-lucide="printer" class="w-4 h-4"></i> Imprimir Cupom
+                        </button>
+                        <button onclick="closeModal()" class="flex items-center justify-center gap-2 py-4 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-2xl hover:bg-slate-200 transition-all active:scale-95 uppercase text-[10px] tracking-widest">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i> Voltar
+                        </button>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+            lucide.createIcons();
         }
 
         function deleteSaleTransactions(saleId) {
@@ -2582,6 +2681,7 @@
                             
                             const totalGross = saleGroup.filter(x => x.type === 'entrada').reduce((acc, x) => acc + x.amount, 0);
                             const totalFees = saleGroup.filter(x => x.type === 'saida' && x.category === 'Taxas de Cartão').reduce((acc, x) => acc + x.amount, 0);
+                            const totalHelper = saleGroup.filter(x => x.type === 'saida' && (x.category === 'Pagamento de Ajudante' || x.isHelperPayment)).reduce((acc, x) => acc + x.amount, 0);
                             
                             groupedFiltered.push({
                                 ...mainEntry,
@@ -2589,6 +2689,7 @@
                                 isGroup: true,
                                 amount: totalGross,
                                 fees: totalFees,
+                                helperCost: totalHelper,
                                 description: `Venda — ${sale ? sale.clientName : (mainEntry.description.split(' - ')[1] || 'Consumidor Final')}`
                             });
                             processedSaleIds.add(t.saleId);
@@ -2714,21 +2815,9 @@
                         </div>
                         <div>
                             <label class="block text-sm font-medium mb-1">Categoria *</label>
-                            <select id="fa-cat" required class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500">
+                            <select id="fa-cat" required class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 font-bold uppercase text-[10px]">
                                 <option value="" disabled ${!acc ? 'selected' : ''}>Selecione uma categoria...</option>
-                                <option value="Aluguel / Galpão" ${acc?.category === 'Aluguel / Galpão' ? 'selected' : ''}>Aluguel / Galpão</option>
-                                <option value="Energia Elétrica" ${acc?.category === 'Energia Elétrica' ? 'selected' : ''}>Energia Elétrica</option>
-                                <option value="Água / Saneamento" ${acc?.category === 'Água / Saneamento' ? 'selected' : ''}>Água / Saneamento</option>
-                                <option value="Internet / Sistemas" ${acc?.category === 'Internet / Sistemas' ? 'selected' : ''}>Internet / Sistemas</option>
-                                <option value="Folha de Pagamento" ${acc?.category === 'Folha de Pagamento' ? 'selected' : ''}>Folha de Pagamento</option>
-                                <option value="Pró-labore" ${acc?.category === 'Pró-labore' ? 'selected' : ''}>Pró-labore</option>
-                                <option value="Impostos / DAS" ${acc?.category === 'Impostos / DAS' ? 'selected' : ''}>Impostos / DAS</option>
-                                <option value="Contabilidade" ${acc?.category === 'Contabilidade' ? 'selected' : ''}>Contabilidade</option>
-                                <option value="Manutenção Máquinas" ${acc?.category === 'Manutenção Máquinas' ? 'selected' : ''}>Manutenção Máquinas</option>
-                                <option value="Marketing / Vendas" ${acc?.category === 'Marketing / Vendas' ? 'selected' : ''}>Marketing / Vendas</option>
-                                <option value="Segurança / Alarmes" ${acc?.category === 'Segurança / Alarmes' ? 'selected' : ''}>Segurança / Alarmes</option>
-                                <option value="Combustível" ${acc?.category === 'Combustível' ? 'selected' : ''}>Combustível</option>
-                                <option value="Outros" ${acc?.category === 'Outros' ? 'selected' : ''}>Outros</option>
+                                ${appState.config.expenseCategories.map(cat => `<option value="${cat}" ${acc?.category === cat ? 'selected' : ''}>${cat}</option>`).join('')}
                             </select>
                         </div>
                         <div class="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-700">
@@ -2871,8 +2960,8 @@
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium mb-1">Categoria</label>
-                                <select id="t-cat" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
-                                    ${categories.map(c => `<option value="${c}">${c}</option>`).join('')}
+                                <select id="t-cat" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-bold uppercase text-[10px]">
+                                    ${(type === 'entrada' ? appState.config.incomeCategories : appState.config.expenseCategories).map(c => `<option value="${c}">${c}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
@@ -2987,6 +3076,7 @@
                         
                         const totalGross = saleGroup.filter(x => x.type === 'entrada').reduce((acc, x) => acc + x.amount, 0);
                         const totalFees = saleGroup.filter(x => x.type === 'saida' && x.category === 'Taxas de Cartão').reduce((acc, x) => acc + x.amount, 0);
+                        const totalHelper = saleGroup.filter(x => x.type === 'saida' && (x.category === 'Pagamento de Ajudante' || x.isHelperPayment)).reduce((acc, x) => acc + x.amount, 0);
                         
                         groupedFiltered.push({
                             ...mainEntry,
@@ -2994,6 +3084,7 @@
                             isGroup: true,
                             amount: totalGross,
                             fees: totalFees,
+                            helperCost: totalHelper,
                             description: `Venda — ${sale ? sale.clientName : (mainEntry.description.split(' - ')[1] || 'Consumidor Final')}`
                         });
                         processedSaleIds.add(t.saleId);
@@ -4093,15 +4184,22 @@
         }
 
         function renderVendasHistorico() {
-            const completedSales = appState.sales.filter(s => s.status === 'completed');
-            
             let html = `
                 <div class="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
-                    <div class="p-5 border-b border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-center gap-4">
-                        <h4 class="font-bold">Histórico de Vendas Concluídas</h4>
-                        <div class="relative w-full sm:w-64">
-                            <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
-                            <input type="text" id="history-search" onkeyup="filterSalesHistory()" placeholder="Buscar cliente..." class="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs outline-none focus:ring-2 focus:ring-primary-500/20">
+                    <div class="p-5 border-b border-slate-100 dark:border-slate-700 flex flex-col gap-4">
+                        <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
+                            <h4 class="font-bold uppercase text-xs tracking-widest text-slate-400">Histórico de Vendas</h4>
+                            <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                                <select id="history-status-filter" onchange="filterSalesHistory()" class="px-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-primary-500/20">
+                                    <option value="all">Todos os Status</option>
+                                    <option value="completed">Concluídas</option>
+                                    <option value="cancelled">Canceladas</option>
+                                </select>
+                                <div class="relative w-full sm:w-64">
+                                    <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                                    <input type="text" id="history-search" onkeyup="filterSalesHistory()" placeholder="Buscar cliente..." class="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs outline-none focus:ring-2 focus:ring-primary-500/20">
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="overflow-x-auto">
@@ -4111,30 +4209,20 @@
                                     <th class="px-6 py-4">ID</th>
                                     <th class="px-6 py-4">Data</th>
                                     <th class="px-6 py-4">Cliente</th>
+                                    <th class="px-6 py-4">Status</th>
                                     <th class="px-6 py-4 text-right">Total</th>
                                     <th class="px-6 py-4 text-right">Ações</th>
                                 </tr>
                             </thead>
                             <tbody id="history-table-body" class="divide-y divide-slate-100 dark:divide-slate-700">
-                                ${completedSales.slice().reverse().map(s => `
-                                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                                        <td class="px-6 py-4 font-bold">#${s.id}</td>
-                                        <td class="px-6 py-4">${formatDate(s.date)}</td>
-                                        <td class="px-6 py-4 font-semibold">${s.clientName}</td>
-                                        <td class="px-6 py-4 text-right font-bold text-green-600">${formatCurrency(s.total)}</td>
-                                        <td class="px-6 py-4 text-right">
-                                            <button onclick="reprintReceipt(${s.id})" class="p-2 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="Reimprimir Recibo">
-                                                <i data-lucide="printer" class="w-4 h-4"></i>
-                                            </button>
-                                        </td>
-                                    </tr>
-                                `).join('') || '<tr><td colspan="5" class="px-6 py-12 text-center text-slate-400 italic">Nenhuma venda concluída encontrada.</td></tr>'}
+                                <!-- Preenchido via filterSalesHistory() -->
                             </tbody>
                         </table>
                     </div>
                 </div>
             `;
             document.getElementById('vendas-content').innerHTML = html;
+            filterSalesHistory();
             lucide.createIcons();
         }
 
@@ -4142,66 +4230,76 @@
             const pendingSales = appState.sales.filter(s => s.status === 'pending');
             
             let html = `
-                <div class="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden animate-fade-in">
-                    <div class="p-5 border-b border-slate-100 dark:border-slate-700 bg-orange-50/50 dark:bg-orange-900/10">
-                        <h4 class="font-bold text-orange-700 dark:text-orange-400 flex items-center gap-2">
-                            <i data-lucide="clock" class="w-5 h-5"></i>
-                            Logística: Pedidos Pendentes de Entrega
+                <div class="animate-fade-in">
+                    <div class="mb-6">
+                        <h4 class="font-black text-slate-900 dark:text-white flex items-center gap-2 uppercase tracking-tighter text-lg">
+                            <i data-lucide="truck" class="w-6 h-6 text-primary-600"></i>
+                            Logística de Entregas
                         </h4>
+                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">${pendingSales.length} pedidos aguardando entrega</p>
                     </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-xs text-left">
-                            <thead class="bg-slate-50 dark:bg-slate-700/50 text-slate-500">
-                                <tr>
-                                    <th class="px-6 py-4">Pedido #</th>
-                                    <th class="px-6 py-4">Data Pedido</th>
-                                    <th class="px-6 py-4">Previsão Entrega</th>
-                                    <th class="px-6 py-4">Cliente</th>
-                                    <th class="px-6 py-4 text-right">Valor Total</th>
-                                    <th class="px-6 py-4 text-right">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
-                                ${pendingSales.length > 0 ? pendingSales.slice().reverse().map(s => {
-                                    const isDelayed = s.deliveryDate && new Date(s.deliveryDate) < new Date(new Date().setHours(0,0,0,0));
-                                    return `
-                                        <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                                            <td class="px-6 py-4 font-bold">#${s.id}</td>
-                                            <td class="px-6 py-4">${formatDate(s.date)}</td>
-                                            <td class="px-6 py-4">
-                                                <div class="flex items-center gap-2 ${isDelayed ? 'text-red-600 font-bold' : ''}">
-                                                    <i data-lucide="calendar" class="w-3 h-3"></i>
-                                                    ${s.deliveryDate ? formatDate(s.deliveryDate) : 'Não definida'}
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        ${pendingSales.length > 0 ? pendingSales.slice().reverse().map(s => {
+                            const isDelayed = s.deliveryDate && new Date(s.deliveryDate) < new Date(new Date().setHours(0,0,0,0));
+                            return `
+                                <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden flex flex-col hover:border-primary-500/50 transition-all group">
+                                    <div class="p-5 border-b border-slate-50 dark:border-slate-700 flex justify-between items-start">
+                                        <div>
+                                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Pedido #${s.id}</p>
+                                            <h5 class="font-black text-slate-900 dark:text-white uppercase truncate max-w-[150px] leading-tight">${s.clientName}</h5>
+                                        </div>
+                                        <div class="text-right">
+                                            <p class="text-sm font-black text-primary-600">${formatCurrency(s.total)}</p>
+                                            <p class="text-[9px] font-bold text-slate-400 uppercase">${formatDate(s.date)}</p>
+                                        </div>
+                                    </div>
+
+                                    <div class="p-5 flex-1 space-y-4">
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center gap-2">
+                                                <div class="w-8 h-8 rounded-xl bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center">
+                                                    <i data-lucide="calendar" class="w-4 h-4 text-orange-600"></i>
                                                 </div>
-                                            </td>
-                                            <td class="px-6 py-4">
-                                                <div class="font-bold">${s.clientName}</div>
-                                                <div class="text-[10px] text-slate-500 uppercase">
-                                                    ${s.payments && s.payments.length > 0 
-                                                        ? s.payments.map(p => `${p.method} (${formatCurrency(p.amount)})`).join(' + ')
-                                                        : s.paymentMethod}
+                                                <div>
+                                                    <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Previsão Entrega</p>
+                                                    <p class="text-[10px] font-black ${isDelayed ? 'text-red-600 animate-pulse' : 'text-slate-700 dark:text-slate-300'} uppercase">
+                                                        ${s.deliveryDate ? formatDate(s.deliveryDate) : 'Não definida'}
+                                                    </p>
                                                 </div>
-                                            </td>
-                                            <td class="px-6 py-4 text-right font-bold text-primary-600">${formatCurrency(s.total)}</td>
-                                            <td class="px-6 py-4 text-right">
-                                                <div class="flex justify-end gap-2">
-                                                    <button onclick="finalizePendingSale(${s.id})" class="px-3 py-2 bg-green-600 text-white text-[10px] font-bold rounded-xl hover:brightness-95 transition-all flex items-center gap-1">
-                                                        <i data-lucide="check" class="w-3 h-3"></i> Confirmar
-                                                    </button>
-                                                    <button onclick="cancelPendingSale(${s.id})" class="px-3 py-2 bg-white dark:bg-slate-700 border border-red-200 dark:border-red-900/30 text-red-600 text-[10px] font-bold rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-all flex items-center gap-1">
-                                                        <i data-lucide="x" class="w-3 h-3"></i> Cancelar
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    `;
-                                }).join('') : `
-                                    <tr>
-                                        <td colspan="6" class="px-6 py-12 text-center text-slate-400 italic">Nenhuma entrega pendente no momento.</td>
-                                    </tr>
-                                `}
-                            </tbody>
-                        </table>
+                                            </div>
+                                            <div class="text-right">
+                                                <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Itens</p>
+                                                <p class="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase">${s.items?.length || 0} produtos</p>
+                                            </div>
+                                        </div>
+
+                                        <div class="bg-slate-50 dark:bg-slate-700/30 rounded-2xl p-3">
+                                            <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Forma de Pagamento</p>
+                                            <p class="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase truncate">
+                                                ${s.payments && s.payments.length > 0 
+                                                    ? s.payments.map(p => `${p.method}`).join(' + ')
+                                                    : s.paymentMethod}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div class="p-4 bg-slate-50 dark:bg-slate-700/50 border-t border-slate-100 dark:border-slate-700 grid grid-cols-2 gap-3">
+                                        <button onclick="finalizePendingSale(${s.id})" class="py-3 bg-green-600 text-white font-black rounded-2xl hover:brightness-95 transition-all active:scale-95 uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-green-600/20">
+                                            <i data-lucide="check-circle" class="w-4 h-4"></i> Confirmar
+                                        </button>
+                                        <button onclick="cancelPendingSale(${s.id})" class="py-3 bg-white dark:bg-slate-800 border border-red-100 dark:border-red-900/30 text-red-600 font-black rounded-2xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-all active:scale-95 uppercase text-[10px] tracking-widest flex items-center justify-center gap-2">
+                                            <i data-lucide="x-circle" class="w-4 h-4"></i> Cancelar
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('') : `
+                            <div class="col-span-full py-20 bg-white dark:bg-slate-800 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400">
+                                <i data-lucide="truck" class="w-12 h-12 mb-4 opacity-20"></i>
+                                <p class="font-black uppercase text-xs tracking-widest">Nenhuma entrega pendente no momento</p>
+                            </div>
+                        `}
                     </div>
                 </div>
             `;
@@ -4210,22 +4308,42 @@
         }
 
         function filterSalesHistory() {
-            const query = document.getElementById('history-search').value.toLowerCase();
-            const completedSales = appState.sales.filter(s => s.status === 'completed' && s.clientName.toLowerCase().includes(query));
+            const query = (document.getElementById('history-search')?.value || '').toLowerCase();
+            const statusFilter = document.getElementById('history-status-filter')?.value || 'all';
             
-            document.getElementById('history-table-body').innerHTML = completedSales.reverse().map(s => `
-                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                    <td class="px-6 py-4 font-bold">#${s.id}</td>
-                    <td class="px-6 py-4">${formatDate(s.date)}</td>
-                    <td class="px-6 py-4 font-semibold">${s.clientName}</td>
-                    <td class="px-6 py-4 text-right font-bold text-green-600">${formatCurrency(s.total)}</td>
-                    <td class="px-6 py-4 text-right">
-                        <button onclick="reprintReceipt(${s.id})" class="p-2 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-all" title="Reimprimir Recibo">
-                            <i data-lucide="printer" class="w-4 h-4"></i>
-                        </button>
-                    </td>
-                </tr>
-            `).join('') || '<tr><td colspan="5" class="px-6 py-12 text-center text-slate-400 italic">Nenhuma venda encontrada.</td></tr>';
+            const filteredSales = appState.sales.filter(s => {
+                const matchesSearch = (s.clientName || '').toLowerCase().includes(query);
+                const matchesStatus = statusFilter === 'all' ? (s.status === 'completed' || s.status === 'cancelled') : s.status === statusFilter;
+                return matchesSearch && matchesStatus;
+            });
+            
+            const container = document.getElementById('history-table-body');
+            if (!container) return;
+
+            container.innerHTML = filteredSales.slice().reverse().map(s => {
+                const isCancelled = s.status === 'cancelled';
+                const statusLabel = isCancelled ? 'Cancelada' : 'Concluída';
+                const statusColor = isCancelled ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600';
+
+                return `
+                    <tr onclick="openSaleDetailsModal(${s.id})" class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors cursor-pointer group">
+                        <td class="px-6 py-4 font-bold">#${s.id}</td>
+                        <td class="px-6 py-4 font-medium text-slate-500">${formatDate(s.date)}</td>
+                        <td class="px-6 py-4 font-bold text-slate-900 dark:text-white uppercase tracking-tight">${s.clientName}</td>
+                        <td class="px-6 py-4">
+                            <span class="px-2 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${statusColor}">${statusLabel}</span>
+                        </td>
+                        <td class="px-6 py-4 text-right font-black ${isCancelled ? 'text-slate-400 line-through' : 'text-green-600'}">${formatCurrency(s.total)}</td>
+                        <td class="px-6 py-4 text-right">
+                            <div class="flex justify-end gap-2">
+                                <button onclick="event.stopPropagation(); reprintReceipt(${s.id})" class="p-2 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-xl transition-all group-hover:scale-110" title="Reimprimir Cupom">
+                                    <i data-lucide="printer" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('') || '<tr><td colspan="6" class="px-6 py-12 text-center text-slate-400 italic">Nenhuma venda encontrada.</td></tr>';
             lucide.createIcons();
         }
 
@@ -4341,161 +4459,270 @@
         }
 
         let finalizePayments = [];
-        function finalizePendingSale(saleId) {
+        let finalizeCurrentStep = 1;
+        let finalizeDate = new Date().toISOString().split('T')[0];
+        let finalizeHelperName = '';
+        let finalizeHelperAdjustment = 0;
+
+        window.finalizePendingSale = (saleId) => {
             const sale = appState.sales.find(s => s.id === saleId);
             if (!sale) return;
-            const helperUnits = (sale.items || []).reduce((acc, i) => acc + (i.isMeter ? (i.units || 1) : (i.qty || 0)), 0);
-            const defaultHelperFee = (() => {
-                const first = (sale.items || [])[0];
-                if (!first) return 0;
-                const p = appState.inventory.find(x => x.id === first.productId);
-                return p?.helperFee || 0;
-            })();
-            const helperCountDefault = sale.deliveryHelperCount ?? 1;
-            const helperFeeDefault = sale.deliveryHelperFeePerUnit ?? defaultHelperFee;
 
-            // Inicializa pagamentos com o valor total da venda
+            finalizeCurrentStep = 1;
+            finalizeDate = new Date().toISOString().split('T')[0];
+            finalizeHelperName = '';
+            
+            // Calcula os custos de ajudante por item
+            const itemsWithHelperFees = (sale.items || []).map(item => {
+                const product = appState.inventory.find(p => p.id === item.productId);
+                const helperQty = (item.isMeter) ? (item.units || 1) : (item.qty || 1);
+                return {
+                    ...item,
+                    helperFee: product?.helperFee || 0,
+                    helperQty: helperQty
+                };
+            });
+
+            const initialTotalHelperCost = itemsWithHelperFees.reduce((acc, item) => acc + (item.helperFee * item.helperQty), 0);
+            finalizeHelperAdjustment = initialTotalHelperCost;
+
             if (sale.payments && sale.payments.length > 0) {
                 finalizePayments = sale.payments.map(p => ({ ...p }));
             } else {
                 finalizePayments = [{ method: sale.paymentMethod || appState.config.paymentMethods[0], amount: sale.total }];
             }
 
-            // Abrir modal para confirmar detalhes finais do recebimento
-            let html = `
-                <div class="p-6">
-                    <div class="flex justify-between items-center mb-6">
-                        <h3 class="text-xl font-bold dark:text-white">Confirmar Recebimento</h3>
-                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
-                            <i data-lucide="x" class="w-5 h-5"></i>
-                        </button>
-                    </div>
-                    
-                    <div class="mb-6 p-4 bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800 rounded-xl">
-                        <div class="flex justify-between items-center mb-1">
-                            <span class="text-xs text-orange-800 dark:text-orange-300 uppercase font-bold tracking-wider">Valor do Pedido #${saleId}</span>
-                            <span class="text-2xl font-black text-orange-600">${formatCurrency(sale.total)}</span>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <span class="text-[10px] text-orange-400 uppercase font-bold tracking-widest">Total Registrado</span>
-                            <span id="finalize-total-paid" class="text-sm font-bold text-slate-700 dark:text-slate-200">${formatCurrency(sale.total)}</span>
-                        </div>
-                    </div>
+            window.renderFinalizeWizard = () => {
+                let stepContent = '';
+                
+                if (finalizeCurrentStep === 1) {
+                    stepContent = `
+                        <div class="space-y-6 animate-fade-in">
+                            <div class="bg-primary-50 dark:bg-primary-900/10 p-5 rounded-3xl border border-primary-100 dark:border-primary-800/30">
+                                <p class="text-[10px] font-black text-primary-600 uppercase tracking-widest mb-1">Cliente</p>
+                                <h4 class="text-xl font-black text-slate-900 dark:text-white uppercase leading-tight">${sale.clientName}</h4>
+                            </div>
 
-                    <div class="space-y-4">
-                        <div id="finalize-payments-list" class="space-y-3">
-                            <!-- Lista de pagamentos -->
-                        </div>
-
-                        <button onclick="addFinalizePaymentMethod(${sale.total})" class="w-full py-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl text-slate-400 hover:text-primary-600 hover:border-primary-500 transition-all flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest">
-                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                            Adicionar forma de pagamento
-                        </button>
-
-                        <div>
-                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Data do Recebimento (Hoje)</label>
-                            <input type="date" id="confirm-payment-date" value="${new Date().toISOString().split('T')[0]}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 text-sm font-bold">
-                        </div>
-
-                        <div class="p-4 bg-slate-50 dark:bg-slate-700/40 border border-slate-100 dark:border-slate-700 rounded-xl">
-                            <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Custo Ajudante (por unidade)</p>
-                            <div class="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Quantidade de ajudantes</label>
-                                    <select id="confirm-helper-count" class="w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
-                                        ${[0,1,2,3].map(n => `<option value="${n}" ${n === helperCountDefault ? 'selected' : ''}>${n}</option>`).join('')}
-                                    </select>
+                            <div class="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-3xl overflow-hidden shadow-sm">
+                                <div class="px-5 py-3 bg-slate-50 dark:bg-slate-700/50 border-b border-slate-100 dark:border-slate-700">
+                                    <h5 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Itens do Pedido</h5>
                                 </div>
-                                <div>
-                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Valor do ajudante (R$)</label>
-                                    <input type="number" step="0.01" id="confirm-helper-fee" value="${helperFeeDefault}" class="w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
+                                <div class="divide-y divide-slate-50 dark:divide-slate-700 max-h-[200px] overflow-y-auto">
+                                    ${sale.items.map(item => `
+                                        <div class="p-4 flex justify-between items-center">
+                                            <div>
+                                                <p class="text-xs font-black text-slate-900 dark:text-white uppercase">${item.name}</p>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase">${item.qty} ${item.isMeter ? 'm' : 'un'}</p>
+                                            </div>
+                                            <p class="text-xs font-black text-slate-700 dark:text-slate-300">${formatCurrency(item.total)}</p>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                <div class="p-4 bg-slate-50 dark:bg-slate-700/30 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center">
+                                    <span class="text-xs font-black text-slate-500 uppercase">Total do Pedido</span>
+                                    <span class="text-lg font-black text-primary-600">${formatCurrency(sale.total)}</span>
                                 </div>
                             </div>
-                            <div class="flex justify-between items-center mt-3 text-xs">
-                                <span class="font-bold text-slate-500">Unidades no pedido</span>
-                                <span class="font-black text-slate-700 dark:text-slate-200">${helperUnits}</span>
+                        </div>
+                    `;
+                } else if (finalizeCurrentStep === 2) {
+                    stepContent = `
+                        <div class="space-y-6 animate-fade-in">
+                            <div class="p-5 bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800/30 rounded-3xl">
+                                <div class="flex justify-between items-center mb-1">
+                                    <span class="text-[10px] font-black text-orange-600 uppercase tracking-widest">Valor do Pedido</span>
+                                    <span class="text-xl font-black text-orange-600">${formatCurrency(sale.total)}</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Total Registrado</span>
+                                    <span id="finalize-total-paid" class="text-sm font-black text-slate-700 dark:text-slate-200">${formatCurrency(0)}</span>
+                                </div>
                             </div>
-                            <div class="flex justify-between items-center mt-1 text-xs">
-                                <span class="font-bold text-slate-500">Custo ajudante total</span>
-                                <span id="confirm-helper-total" class="font-black text-primary-600">${formatCurrency((helperCountDefault || 0) * (helperFeeDefault || 0) * helperUnits)}</span>
+
+                            <div class="space-y-4">
+                                <div id="finalize-payments-list" class="space-y-3"></div>
+                                <button onclick="addFinalizePaymentMethod(${sale.total})" class="w-full py-4 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl text-slate-400 hover:text-primary-600 hover:border-primary-500 transition-all flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest">
+                                    <i data-lucide="plus-circle" class="w-4 h-4"></i> Adicionar Pagamento
+                                </button>
+                                
+                                <div>
+                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Data do Recebimento</label>
+                                    <input type="date" id="confirm-payment-date" value="${finalizeDate}" onchange="finalizeDate = this.value" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none text-sm font-bold">
+                                </div>
                             </div>
                         </div>
-                    </div>
+                    `;
+                } else if (finalizeCurrentStep === 3) {
+                    stepContent = `
+                        <div class="space-y-6 animate-fade-in">
+                            <div class="p-5 bg-slate-50 dark:bg-slate-700/40 border border-slate-100 dark:border-slate-700 rounded-3xl space-y-4">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <i data-lucide="truck" class="w-5 h-5 text-primary-600"></i>
+                                    <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400">Detalhamento do Ajudante</h4>
+                                </div>
 
-                    <div class="grid grid-cols-2 gap-3 mt-8">
-                        <button onclick="closeModal()" class="py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
-                            Cancelar
-                        </button>
-                        <button id="btn-confirm-final" class="py-3.5 rounded-2xl bg-success text-white font-black text-xs uppercase tracking-widest hover:brightness-95 shadow-lg shadow-success/20 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale">
-                            Confirmar Entrega e Receber
-                        </button>
-                    </div>
-                </div>
-            `;
-            openModal(html);
-            updateFinalizePaymentsUI(sale.total);
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">Nome do Ajudante</label>
+                                    <input type="text" id="confirm-helper-name" value="${finalizeHelperName}" oninput="finalizeHelperName = this.value" placeholder="Ex: João da Silva" class="w-full p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none text-sm font-bold">
+                                </div>
 
-            const updateHelperTotal = () => {
-                const c = parseInt(document.getElementById('confirm-helper-count').value) || 0;
-                const f = parseFloat(document.getElementById('confirm-helper-fee').value) || 0;
-                document.getElementById('confirm-helper-total').innerText = formatCurrency(c * f * helperUnits);
+                                <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 overflow-hidden">
+                                    <table class="w-full text-left text-[10px]">
+                                        <thead class="bg-slate-50 dark:bg-slate-700/50">
+                                            <tr>
+                                                <th class="px-3 py-3 font-black uppercase text-slate-400">Produto</th>
+                                                <th class="px-3 py-3 font-black uppercase text-slate-400 text-center">Qtd</th>
+                                                <th class="px-3 py-3 font-black uppercase text-slate-400 text-right">Custo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-50 dark:divide-slate-700">
+                                            ${itemsWithHelperFees.map((item, idx) => `
+                                                <tr>
+                                                    <td class="px-3 py-3 font-bold text-slate-700 dark:text-slate-200 uppercase">${item.name}</td>
+                                                    <td class="px-3 py-3 text-center font-bold">${item.helperQty}</td>
+                                                    <td class="px-3 py-3 text-right">
+                                                        <input type="number" step="0.01" value="${item.helperFee}" 
+                                                            oninput="updateIndividualHelperFee(${idx}, this.value, ${saleId})"
+                                                            class="w-16 p-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded text-right font-black">
+                                                    </td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div class="pt-2 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center">
+                                    <span class="text-[10px] font-black text-slate-400 uppercase">Custo Total Ajudante</span>
+                                    <span id="calculated-helper-total" class="text-lg font-black text-primary-600">${formatCurrency(finalizeHelperAdjustment)}</span>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">Ajuste Manual do Total</label>
+                                    <div class="relative">
+                                        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">R$</span>
+                                        <input type="number" step="0.01" id="confirm-helper-adjustment" value="${finalizeHelperAdjustment.toFixed(2)}" 
+                                            oninput="finalizeHelperAdjustment = parseFloat(this.value) || 0"
+                                            class="w-full pl-10 pr-4 py-4 bg-white dark:bg-slate-800 border-2 border-primary-100 dark:border-primary-900/30 rounded-2xl outline-none focus:border-primary-500 text-sm font-black text-primary-600">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                const wizardHtml = `
+                    <div class="p-6">
+                        <div class="flex justify-between items-center mb-8">
+                            <div>
+                                <h3 class="text-xl font-black dark:text-white uppercase tracking-tighter">Confirmar Entrega</h3>
+                                <div class="flex gap-1 mt-2">
+                                    ${[1, 2, 3].map(s => `
+                                        <div class="h-1 w-8 rounded-full ${finalizeCurrentStep >= s ? 'bg-primary-600' : 'bg-slate-200 dark:bg-slate-700'} transition-all"></div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                                <i data-lucide="x" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+
+                        <div class="min-h-[350px]">
+                            ${stepContent}
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 mt-10">
+                            ${finalizeCurrentStep === 1 ? `
+                                <button onclick="closeModal()" class="py-4 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all">Cancelar</button>
+                                <button onclick="finalizeNextStep()" class="py-4 rounded-2xl bg-primary-600 text-white font-black text-[10px] uppercase tracking-widest hover:brightness-95 shadow-lg shadow-primary-500/20 transition-all">Próximo: Pagamento</button>
+                            ` : finalizeCurrentStep === 2 ? `
+                                <button onclick="finalizePrevStep()" class="py-4 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all">Voltar</button>
+                                <button id="btn-confirm-final" onclick="finalizeNextStep()" class="py-4 rounded-2xl bg-primary-600 text-white font-black text-[10px] uppercase tracking-widest hover:brightness-95 shadow-lg shadow-primary-500/20 transition-all disabled:opacity-50 disabled:grayscale">Próximo: Ajudante</button>
+                            ` : `
+                                <button onclick="finalizePrevStep()" class="py-4 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 transition-all">Voltar</button>
+                                <button id="btn-finalize-complete" onclick="finalizeCompleteSale(${saleId})" class="py-4 rounded-2xl bg-success text-white font-black text-[10px] uppercase tracking-widest hover:brightness-95 shadow-lg shadow-success/20 transition-all disabled:opacity-50 disabled:grayscale">Finalizar Entrega</button>
+                            `}
+                        </div>
+                    </div>
+                `;
+                
+                openModal(wizardHtml);
+                if (finalizeCurrentStep === 2) updateFinalizePaymentsUI(sale.total);
+                if (finalizeCurrentStep === 3) {
+                    const totalPaid = finalizePayments.reduce((acc, p) => acc + p.amount, 0);
+                    const btnComplete = document.getElementById('btn-finalize-complete');
+                    if (btnComplete) btnComplete.disabled = Math.abs(totalPaid - sale.total) > 0.01;
+                }
             };
-            document.getElementById('confirm-helper-count').onchange = updateHelperTotal;
-            document.getElementById('confirm-helper-fee').oninput = updateHelperTotal;
 
-            document.getElementById('btn-confirm-final').onclick = () => {
-                const finalDate = document.getElementById('confirm-payment-date').value;
-                const helperCount = parseInt(document.getElementById('confirm-helper-count').value) || 0;
-                const helperFeePerUnit = parseFloat(document.getElementById('confirm-helper-fee').value) || 0;
+            window.finalizeNextStep = () => {
+                finalizeCurrentStep++;
+                window.renderFinalizeWizard();
+            };
+
+            window.finalizePrevStep = () => {
+                finalizeCurrentStep--;
+                window.renderFinalizeWizard();
+            };
+
+            window.finalizeCompleteSale = (sId) => {
+                const finalDate = finalizeDate;
+                const helperName = finalizeHelperName.trim();
+                const finalHelperCost = finalizeHelperAdjustment;
 
                 // 1. Mark as completed
+                sale.orderDate = sale.date;
                 sale.status = 'completed';
-                sale.date = finalDate; // Data real do recebimento
-                sale.fee = 0; // Inicializar a taxa para acumular
+                sale.date = finalDate;
+                sale.fee = 0;
                 sale.payments = finalizePayments.map(p => ({ ...p }));
                 sale.paymentMethod = finalizePayments.length === 1 ? finalizePayments[0].method : 'Múltiplos';
-                sale.deliveryHelperCount = helperCount;
-                sale.deliveryHelperFeePerUnit = helperFeePerUnit;
-                sale.deliveryHelperUnits = helperUnits;
-                sale.deliveryHelperCostTotal = helperCount * helperFeePerUnit * helperUnits;
+                
+                sale.deliveryHelperName = helperName;
+                sale.deliveryHelperCostTotal = finalHelperCost;
+                sale.deliveryHelperItems = itemsWithHelperFees.map(i => ({
+                    productId: i.productId,
+                    name: i.name,
+                    qty: i.qty,
+                    units: i.helperQty,
+                    helperFee: i.helperFee
+                }));
 
                 // 2. Record Transactions
                 finalizePayments.forEach((payment, idx) => {
-                    // Entrada (Bruto)
                     appState.transactions.push({
                         id: Date.now() + idx,
-                        saleId: saleId, // Link para a venda
+                        saleId: sId,
                         type: 'entrada',
                         category: 'Venda de Pré-moldados',
                         amount: payment.amount,
                         date: finalDate,
-                        description: `Recebimento Pedido #${saleId} (${payment.method}) - ${sale.clientName}`,
+                        description: `Recebimento Pedido #${sId} (${payment.method}) - ${sale.clientName}`,
                         account: 'Caixa Principal',
                         paymentMethod: payment.method
                     });
 
-                    // Saída (Taxa de Cartão) se houver
                     if (payment.method.toLowerCase().includes('cartão')) {
                         let feePerc = 0;
                         if (payment.method.includes('Crédito')) {
                             const installments = payment.installments || 1;
-                            const feeConfig = appState.config.cardFees.credit.find(f => f.installments === installments);
-                            feePerc = feeConfig ? feeConfig.fee : appState.config.cardFees.credit[0].fee;
+                            const creditFees = appState.config.cardFees.credit || [];
+                            const feeConfig = creditFees.find(f => f.installments === installments);
+                            feePerc = feeConfig ? feeConfig.fee : (creditFees.length > 0 ? creditFees[0].fee : 0);
                         } else {
-                            feePerc = appState.config.cardFees.debit;
+                            feePerc = appState.config.cardFees.debit || 0;
                         }
                         const feeAmount = payment.amount * (feePerc / 100);
                         
                         if (feeAmount > 0) {
-                            sale.fee += feeAmount; // Acumular a taxa na venda
+                            sale.fee += feeAmount;
                             appState.transactions.push({
                                 id: Date.now() + 100 + idx,
-                                saleId: saleId, // Link para a venda
+                                saleId: sId,
                                 type: 'saida',
                                 category: 'Taxas de Cartão',
                                 amount: feeAmount,
                                 date: finalDate,
-                                description: `Taxa ${payment.method} - Pedido #${saleId}`,
+                                description: `Taxa ${payment.method} - Pedido #${sId}`,
                                 account: 'Caixa Principal',
                                 paymentMethod: payment.method
                             });
@@ -4503,11 +4730,41 @@
                     }
                 });
 
+                if (finalHelperCost > 0) {
+                    appState.transactions.push({
+                        id: Date.now() + 500,
+                        saleId: sId,
+                        type: 'saida',
+                        category: 'Pagamento de Ajudante',
+                        amount: finalHelperCost,
+                        date: finalDate,
+                        description: `Pagamento ajudante — ${helperName || 'N/A'} — Entrega venda #${sId}`,
+                        account: 'Caixa Principal',
+                        paymentMethod: 'Dinheiro',
+                        isHelperPayment: true,
+                        helperName: helperName
+                    });
+                }
+
                 saveData();
                 closeModal();
                 showToast('Venda concluída e pagamento registrado!');
                 renderVendas();
                 openPostSaleSuccessModal(sale);
+            };
+
+            window.renderFinalizeWizard();
+
+            // Funções auxiliares mantidas
+            window.updateIndividualHelperFee = (idx, val, sId) => {
+                const newFee = parseFloat(val) || 0;
+                itemsWithHelperFees[idx].helperFee = newFee;
+                const newTotal = itemsWithHelperFees.reduce((acc, item) => acc + (item.helperFee * item.helperQty), 0);
+                finalizeHelperAdjustment = newTotal;
+                const calcTotalEl = document.getElementById('calculated-helper-total');
+                if (calcTotalEl) calcTotalEl.innerText = formatCurrency(newTotal);
+                const adjInput = document.getElementById('confirm-helper-adjustment');
+                if (adjInput) adjInput.value = newTotal.toFixed(2);
             };
         }
 
@@ -4537,9 +4794,9 @@
                 elTotalPaid.innerText = formatCurrency(totalPaid);
                 elTotalPaid.className = Math.abs(totalPaid - total) < 0.01 ? 'text-sm font-bold text-success' : 'text-sm font-bold text-danger';
             }
-            const btnConfirm = document.getElementById('btn-confirm-final');
-            if (btnConfirm) {
-                btnConfirm.disabled = Math.abs(totalPaid - total) > 0.01;
+            const btnComplete = document.getElementById('btn-finalize-complete');
+            if (btnComplete) {
+                btnComplete.disabled = Math.abs(totalPaid - total) > 0.01;
             }
         }
 
@@ -4611,7 +4868,7 @@
             }
         }
 
-        function cancelPendingSale(saleId) {
+        window.cancelPendingSale = (saleId) => {
             const saleIndex = appState.sales.findIndex(s => s.id === saleId);
             if (saleIndex === -1) return;
             
@@ -5181,10 +5438,11 @@
                         let feePerc = 0;
                         if (payment.method.includes('Crédito')) {
                             const installments = payment.installments || 1;
-                            const feeConfig = appState.config.cardFees.credit.find(f => f.installments === installments);
-                            feePerc = feeConfig ? feeConfig.fee : appState.config.cardFees.credit[0].fee;
+                            const creditFees = appState.config.cardFees.credit || [];
+                            const feeConfig = creditFees.find(f => f.installments === installments);
+                            feePerc = feeConfig ? feeConfig.fee : (creditFees.length > 0 ? creditFees[0].fee : 0);
                         } else {
-                            feePerc = appState.config.cardFees.debit;
+                            feePerc = appState.config.cardFees.debit || 0;
                         }
                         const feeAmount = payment.amount * (feePerc / 100);
                         
@@ -6407,33 +6665,182 @@
                 `;
             } else if (type === 'caixa') {
                 title = "Relatório de Fluxo de Caixa";
+                
+                // Configuração inicial de filtros
+                const now = new Date();
+                const last30Days = new Date(now);
+                last30Days.setDate(now.getDate() - 30);
+                const defaultStart = last30Days.toISOString().split('T')[0];
+                const defaultEnd = now.toISOString().split('T')[0];
+
                 content = `
                     <div class="space-y-6">
-                        <p class="text-sm text-slate-500">Resumo das últimas 20 movimentações financeiras.</p>
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-xs text-left">
-                                <thead class="bg-slate-50 dark:bg-slate-700/50">
+                        <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 space-y-4">
+                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                <button onclick="setCaixaReportPreset('last_7')" class="py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 font-black text-[9px] uppercase tracking-widest hover:bg-primary-50 hover:text-primary-600 transition-all">7 dias</button>
+                                <button onclick="setCaixaReportPreset('last_30')" class="py-2 rounded-xl bg-primary-600 text-white font-black text-[9px] uppercase tracking-widest hover:brightness-95 transition-all shadow-sm">30 dias</button>
+                                <button onclick="setCaixaReportPreset('this_month')" class="py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 font-black text-[9px] uppercase tracking-widest hover:bg-primary-50 hover:text-primary-600 transition-all">Este mês</button>
+                                <button onclick="setCaixaReportPreset('all')" class="py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 font-black text-[9px] uppercase tracking-widest hover:bg-primary-50 hover:text-primary-600 transition-all">Tudo</button>
+                            </div>
+                            
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Início</label>
+                                    <input type="date" id="caixa-report-start" value="${defaultStart}" onchange="filterCaixaReport()" class="w-full p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold">
+                                </div>
+                                <div>
+                                    <label class="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Fim</label>
+                                    <input type="date" id="caixa-report-end" value="${defaultEnd}" onchange="filterCaixaReport()" class="w-full p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold">
+                                </div>
+                                <div>
+                                    <label class="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Tipo</label>
+                                    <select id="caixa-report-type" onchange="filterCaixaReport()" class="w-full p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold">
+                                        <option value="all">Todas as Movimentações</option>
+                                        <option value="entrada">Apenas Entradas</option>
+                                        <option value="saida">Apenas Saídas</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="caixa-report-summary" class="grid grid-cols-3 gap-3">
+                            <!-- Preenchido via filterCaixaReport() -->
+                        </div>
+
+                        <div class="overflow-x-auto bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+                            <table class="w-full text-[11px] text-left">
+                                <thead class="bg-slate-50 dark:bg-slate-700/50 text-slate-500">
                                     <tr>
-                                        <th class="px-2 py-2">Data</th>
-                                        <th class="px-2 py-2">Descrição</th>
-                                        <th class="px-2 py-2 text-right">Valor</th>
+                                        <th class="px-4 py-3 font-black uppercase tracking-widest">Data</th>
+                                        <th class="px-4 py-3 font-black uppercase tracking-widest">Descrição / Categoria</th>
+                                        <th class="px-4 py-3 text-right font-black uppercase tracking-widest">Valor</th>
                                     </tr>
                                 </thead>
-                                <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
-                                    ${appState.transactions.slice(-20).reverse().map(t => `
-                                        <tr>
-                                            <td class="px-2 py-2">${formatDate(t.date)}</td>
-                                            <td class="px-2 py-2">${t.description}</td>
-                                            <td class="px-2 py-2 text-right font-bold ${t.type === 'entrada' ? 'text-success' : 'text-danger'}">
-                                                ${t.type === 'entrada' ? '+' : '-'}${formatCurrency(t.amount)}
-                                            </td>
-                                        </tr>
-                                    `).join('')}
+                                <tbody id="caixa-report-table-body" class="divide-y divide-slate-50 dark:divide-slate-700">
+                                    <!-- Preenchido via filterCaixaReport() -->
                                 </tbody>
                             </table>
                         </div>
+                        
+                        <div id="caixa-report-load-more-container" class="flex justify-center pt-2">
+                            <button id="btn-caixa-load-more" onclick="loadMoreCaixaReport()" class="px-6 py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-slate-200 transition-all flex items-center gap-2">
+                                <i data-lucide="plus-circle" class="w-4 h-4"></i> Carregar Mais
+                            </button>
+                        </div>
                     </div>
                 `;
+
+                // Funções globais para o relatório de caixa
+                window.caixaReportLimit = 20;
+                window.caixaReportFilteredData = [];
+
+                window.setCaixaReportPreset = (preset) => {
+                    const now = new Date();
+                    const today = now.toISOString().split('T')[0];
+                    let start = '';
+                    let end = today;
+
+                    if (preset === 'last_7') {
+                        const d = new Date(now);
+                        d.setDate(d.getDate() - 7);
+                        start = d.toISOString().split('T')[0];
+                    } else if (preset === 'last_30') {
+                        const d = new Date(now);
+                        d.setDate(d.getDate() - 30);
+                        start = d.toISOString().split('T')[0];
+                    } else if (preset === 'this_month') {
+                        start = now.toISOString().slice(0, 7) + '-01';
+                    } else if (preset === 'all') {
+                        start = '';
+                        end = '';
+                    }
+
+                    document.getElementById('caixa-report-start').value = start;
+                    document.getElementById('caixa-report-end').value = end;
+                    
+                    // Atualiza estilo dos botões
+                    const buttons = document.querySelectorAll('[onclick^="setCaixaReportPreset"]');
+                    buttons.forEach(btn => {
+                        btn.classList.remove('bg-primary-600', 'text-white', 'shadow-sm');
+                        btn.classList.add('bg-white', 'dark:bg-slate-800', 'text-slate-600', 'dark:text-slate-300');
+                    });
+                    event.currentTarget.classList.remove('bg-white', 'dark:bg-slate-800', 'text-slate-600', 'dark:text-slate-300');
+                    event.currentTarget.classList.add('bg-primary-600', 'text-white', 'shadow-sm');
+
+                    window.filterCaixaReport();
+                };
+
+                window.filterCaixaReport = () => {
+                    const start = document.getElementById('caixa-report-start').value;
+                    const end = document.getElementById('caixa-report-end').value;
+                    const type = document.getElementById('caixa-report-type').value;
+                    
+                    window.caixaReportLimit = 20;
+                    
+                    window.caixaReportFilteredData = appState.transactions.filter(t => {
+                        const matchesStart = !start || t.date >= start;
+                        const matchesEnd = !end || t.date <= end;
+                        const matchesType = type === 'all' || t.type === type;
+                        return matchesStart && matchesEnd && matchesType;
+                    }).reverse();
+
+                    // Atualiza Resumo
+                    const totalIn = window.caixaReportFilteredData.filter(t => t.type === 'entrada').reduce((acc, t) => acc + t.amount, 0);
+                    const totalOut = window.caixaReportFilteredData.filter(t => t.type === 'saida').reduce((acc, t) => acc + t.amount, 0);
+                    
+                    document.getElementById('caixa-report-summary').innerHTML = `
+                        <div class="p-3 bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/30 rounded-xl">
+                            <p class="text-[8px] font-black text-green-600 uppercase tracking-widest mb-0.5">Entradas</p>
+                            <p class="text-xs font-black text-green-600">${formatCurrency(totalIn)}</p>
+                        </div>
+                        <div class="p-3 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-800/30 rounded-xl">
+                            <p class="text-[8px] font-black text-red-600 uppercase tracking-widest mb-0.5">Saídas</p>
+                            <p class="text-xs font-black text-red-600">${formatCurrency(totalOut)}</p>
+                        </div>
+                        <div class="p-3 bg-primary-50 dark:bg-primary-900/10 border border-primary-100 dark:border-primary-800/30 rounded-xl">
+                            <p class="text-[8px] font-black text-primary-600 uppercase tracking-widest mb-0.5">Saldo</p>
+                            <p class="text-xs font-black text-primary-600">${formatCurrency(totalIn - totalOut)}</p>
+                        </div>
+                    `;
+
+                    window.renderCaixaReportRows();
+                };
+
+                window.renderCaixaReportRows = () => {
+                    const dataToShow = window.caixaReportFilteredData.slice(0, window.caixaReportLimit);
+                    const container = document.getElementById('caixa-report-table-body');
+                    const loadMoreBtn = document.getElementById('caixa-report-load-more-container');
+                    
+                    if (!container) return;
+
+                    container.innerHTML = dataToShow.map(t => `
+                        <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                            <td class="px-4 py-3 font-medium text-slate-500">${formatDate(t.date)}</td>
+                            <td class="px-4 py-3">
+                                <div class="font-bold text-slate-900 dark:text-white uppercase truncate max-w-[200px]">${t.description}</div>
+                                <div class="text-[9px] text-slate-400 font-bold uppercase tracking-wider">${t.category || 'Geral'}</div>
+                            </td>
+                            <td class="px-4 py-3 text-right font-black ${t.type === 'entrada' ? 'text-green-600' : 'text-red-600'}">
+                                ${t.type === 'entrada' ? '+' : '-'} ${formatCurrency(t.amount)}
+                            </td>
+                        </tr>
+                    `).join('') || '<tr><td colspan="3" class="px-4 py-10 text-center text-slate-400 italic">Nenhuma movimentação encontrada no período.</td></tr>';
+                    
+                    if (window.caixaReportLimit >= window.caixaReportFilteredData.length) {
+                        loadMoreBtn.classList.add('hidden');
+                    } else {
+                        loadMoreBtn.classList.remove('hidden');
+                    }
+                    lucide.createIcons();
+                };
+
+                window.loadMoreCaixaReport = () => {
+                    window.caixaReportLimit += 20;
+                    window.renderCaixaReportRows();
+                };
+
+                // Executa filtro inicial
+                setTimeout(() => window.filterCaixaReport(), 100);
             }
 
             let html = `
@@ -6817,6 +7224,117 @@
                 `;
             }
 
+            if (configTab === 'categorias') {
+                return `
+                    <div class="space-y-6 animate-fade-in pb-10">
+                        <button onclick="switchConfigTab('menu')" class="flex items-center gap-2 text-primary-600 font-black text-[10px] uppercase tracking-widest mb-4">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i> Voltar ao Menu
+                        </button>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <!-- Categorias de Produtos -->
+                            <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 h-fit">
+                                <div class="flex justify-between items-center mb-6">
+                                    <div>
+                                        <h3 class="font-black flex items-center gap-2 uppercase tracking-tighter text-slate-900 dark:text-white">
+                                            <i data-lucide="package" class="w-5 h-5 text-primary-600"></i>
+                                            Categorias de Produtos
+                                        </h3>
+                                        <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Para o Cadastro de Itens</p>
+                                    </div>
+                                    <button onclick="openCategoryModal('product')" class="p-2 bg-primary-50 text-primary-600 rounded-xl hover:bg-primary-600 hover:text-white transition-all">
+                                        <i data-lucide="plus" class="w-5 h-5"></i>
+                                    </button>
+                                </div>
+
+                                <div class="space-y-2">
+                                    ${appState.config.categories.map((cat, idx) => `
+                                        <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between group">
+                                            <span class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${cat}</span>
+                                            <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                                                <button onclick="openCategoryModal('product', '${cat}', ${idx})" class="p-2 text-slate-400 hover:text-primary-600 transition-all">
+                                                    <i data-lucide="edit-3" class="w-4 h-4"></i>
+                                                </button>
+                                                <button onclick="deleteCategory('product', ${idx})" class="p-2 text-slate-400 hover:text-red-600 transition-all">
+                                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    `).join('') || '<p class="text-center py-8 text-slate-400 italic text-xs font-bold">Nenhuma categoria cadastrada.</p>'}
+                                </div>
+                            </div>
+
+                            <!-- Categorias de Fluxo de Caixa -->
+                            <div class="space-y-6">
+                                <!-- Despesas -->
+                                <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 h-fit">
+                                    <div class="flex justify-between items-center mb-6">
+                                        <div>
+                                            <h3 class="font-black flex items-center gap-2 uppercase tracking-tighter text-red-600">
+                                                <i data-lucide="trending-down" class="w-5 h-5"></i>
+                                                Despesas (Saídas)
+                                            </h3>
+                                            <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Categorias Financeiras</p>
+                                        </div>
+                                        <button onclick="openCategoryModal('expense')" class="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all">
+                                            <i data-lucide="plus" class="w-5 h-5"></i>
+                                        </button>
+                                    </div>
+
+                                    <div class="space-y-2">
+                                        ${appState.config.expenseCategories.map((cat, idx) => `
+                                            <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between group">
+                                                <span class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${cat}</span>
+                                                <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                                                    <button onclick="openCategoryModal('expense', '${cat}', ${idx})" class="p-2 text-slate-400 hover:text-primary-600 transition-all">
+                                                        <i data-lucide="edit-3" class="w-4 h-4"></i>
+                                                    </button>
+                                                    <button onclick="deleteCategory('expense', ${idx})" class="p-2 text-slate-400 hover:text-red-600 transition-all">
+                                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        `).join('') || '<p class="text-center py-8 text-slate-400 italic text-xs font-bold">Nenhuma categoria cadastrada.</p>'}
+                                    </div>
+                                </div>
+
+                                <!-- Receitas -->
+                                <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 h-fit">
+                                    <div class="flex justify-between items-center mb-6">
+                                        <div>
+                                            <h3 class="font-black flex items-center gap-2 uppercase tracking-tighter text-green-600">
+                                                <i data-lucide="trending-up" class="w-5 h-5"></i>
+                                                Receitas (Entradas)
+                                            </h3>
+                                            <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Categorias Financeiras</p>
+                                        </div>
+                                        <button onclick="openCategoryModal('income')" class="p-2 bg-green-50 text-green-600 rounded-xl hover:bg-green-600 hover:text-white transition-all">
+                                            <i data-lucide="plus" class="w-5 h-5"></i>
+                                        </button>
+                                    </div>
+
+                                    <div class="space-y-2">
+                                        ${appState.config.incomeCategories.map((cat, idx) => `
+                                            <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700 flex items-center justify-between group">
+                                                <span class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${cat}</span>
+                                                <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                                                    <button onclick="openCategoryModal('income', '${cat}', ${idx})" class="p-2 text-slate-400 hover:text-primary-600 transition-all">
+                                                        <i data-lucide="edit-3" class="w-4 h-4"></i>
+                                                    </button>
+                                                    <button onclick="deleteCategory('income', ${idx})" class="p-2 text-slate-400 hover:text-red-600 transition-all">
+                                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        `).join('') || '<p class="text-center py-8 text-slate-400 italic text-xs font-bold">Nenhuma categoria cadastrada.</p>'}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
             if (configTab === 'manutencao') {
                 return `
                     <div class="space-y-6 animate-fade-in">
@@ -6990,6 +7508,19 @@
                         <i data-lucide="chevron-right" class="w-5 h-5 text-slate-300 group-hover:text-primary-500 transition-all"></i>
                     </button>
 
+                    <button onclick="switchConfigTab('categorias')" class="w-full p-5 bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-between group hover:border-primary-500 transition-all active:scale-[0.98]">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 bg-purple-50 dark:bg-primary-900/20 text-purple-600 rounded-2xl flex items-center justify-center">
+                                <i data-lucide="tag" class="w-6 h-6"></i>
+                            </div>
+                            <div class="text-left">
+                                <h4 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">Categorias</h4>
+                                <p class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Categorias de Produtos</p>
+                            </div>
+                        </div>
+                        <i data-lucide="chevron-right" class="w-5 h-5 text-slate-300 group-hover:text-primary-500 transition-all"></i>
+                    </button>
+
                     <button onclick="switchConfigTab('dados')" class="w-full p-5 bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-between group hover:border-primary-500 transition-all active:scale-[0.98]">
                         <div class="flex items-center gap-4">
                             <div class="w-12 h-12 bg-slate-50 dark:bg-slate-900/20 text-slate-600 rounded-2xl flex items-center justify-center">
@@ -7041,6 +7572,133 @@
             saveData();
             showToast('Taxas de cartão atualizadas!');
             switchConfigTab('menu');
+        }
+
+        function openCategoryModal(type, name = '', index = -1) {
+            const isEdit = index !== -1;
+            const titles = {
+                product: 'Categoria de Produto',
+                expense: 'Categoria de Despesa',
+                income: 'Categoria de Receita'
+            };
+            
+            let html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-bold dark:text-white">${isEdit ? 'Editar' : 'Nova'} ${titles[type]}</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <form id="category-form" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-1 uppercase text-[10px] font-black text-slate-400 tracking-widest">Nome da Categoria *</label>
+                            <input type="text" id="cat-name" required value="${name}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                        </div>
+                        <div class="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                            <button type="button" onclick="closeModal()" class="px-6 py-3 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-all">Cancelar</button>
+                            <button type="submit" class="px-6 py-3 rounded-2xl bg-primary-600 text-white font-black text-xs uppercase tracking-widest hover:brightness-95 shadow-lg shadow-primary-500/20 transition-all">Salvar Categoria</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+            openModal(html);
+
+            document.getElementById('category-form').onsubmit = (e) => {
+                e.preventDefault();
+                const newName = document.getElementById('cat-name').value.trim();
+                if (!newName) return;
+
+                let targetArray;
+                if (type === 'product') targetArray = appState.config.categories;
+                else if (type === 'expense') targetArray = appState.config.expenseCategories;
+                else if (type === 'income') targetArray = appState.config.incomeCategories;
+
+                if (isEdit) {
+                    const oldName = targetArray[index];
+                    targetArray[index] = newName;
+                    
+                    // Sincronização retroativa
+                    if (type === 'product') {
+                        appState.inventory.forEach(p => { if (p.category === oldName) p.category = newName; });
+                    } else {
+                        appState.transactions.forEach(t => { if (t.category === oldName) t.category = newName; });
+                        appState.fixedAccounts.forEach(a => { if (a.category === oldName) a.category = newName; });
+                    }
+                } else {
+                    targetArray.push(newName);
+                }
+
+                saveData();
+                renderConfig();
+                closeModal();
+                showToast(`Categoria ${isEdit ? 'atualizada' : 'criada'}!`);
+            };
+        }
+
+        function deleteCategory(type, index) {
+            let targetArray, catName;
+            if (type === 'product') {
+                targetArray = appState.config.categories;
+                catName = targetArray[index];
+                const productsInCat = appState.inventory.filter(p => p.category === catName);
+                if (productsInCat.length > 0) {
+                    showCategoryBlockedModal(catName, `${productsInCat.length} produtos`);
+                    return;
+                }
+            } else if (type === 'expense') {
+                targetArray = appState.config.expenseCategories;
+                catName = targetArray[index];
+                const transactionsInCat = appState.transactions.filter(t => t.type === 'saida' && t.category === catName);
+                const fixedInCat = appState.fixedAccounts.filter(a => a.category === catName);
+                if (transactionsInCat.length > 0 || fixedInCat.length > 0) {
+                    const usage = [];
+                    if (transactionsInCat.length > 0) usage.push(`${transactionsInCat.length} movimentações`);
+                    if (fixedInCat.length > 0) usage.push(`${fixedInCat.length} contas fixas`);
+                    showCategoryBlockedModal(catName, usage.join(' e '));
+                    return;
+                }
+            } else if (type === 'income') {
+                targetArray = appState.config.incomeCategories;
+                catName = targetArray[index];
+                const transactionsInCat = appState.transactions.filter(t => t.type === 'entrada' && t.category === catName);
+                if (transactionsInCat.length > 0) {
+                    showCategoryBlockedModal(catName, `${transactionsInCat.length} movimentações de entrada`);
+                    return;
+                }
+            }
+
+            if (confirm(`Tem certeza que deseja excluir a categoria "${catName}"?`)) {
+                targetArray.splice(index, 1);
+                saveData();
+                renderConfig();
+                showToast('Categoria excluída!');
+            }
+        }
+
+        function showCategoryBlockedModal(catName, usageText) {
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-black text-red-600 uppercase tracking-tight">Bloqueado</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <div class="p-4 bg-red-50 dark:bg-red-900/10 rounded-2xl border border-red-100 dark:border-red-800/30">
+                        <p class="text-sm font-bold text-red-700 dark:text-red-400">
+                            Não é possível excluir a categoria <span class="font-black">"${catName}"</span> porque existem <span class="font-black">${usageText}</span> vinculadas a ela.
+                        </p>
+                        <p class="text-[10px] mt-2 text-red-500 font-bold uppercase">Altere os registros antes de excluir.</p>
+                    </div>
+                    <div class="mt-6">
+                        <button onclick="closeModal()" class="w-full py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-all">
+                            Entendi
+                        </button>
+                    </div>
+                </div>
+            `;
+            openModal(html);
         }
 
         function recordMaintenance(id) {
