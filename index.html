@@ -27,6 +27,12 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
     <!-- Lucide Icons via CDN -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -282,6 +288,38 @@
 
     <!-- Scripts -->
     <script>
+        // --- FIREBASE CONFIGURATION ---
+        // VOCÊ PRECISA CRIAR UM PROJETO NO FIREBASE (https://console.firebase.google.com/)
+        // E SUBSTITUIR O OBJETO ABAIXO PELAS CONFIGURAÇÕES DO SEU PROJETO.
+        const firebaseConfig = { 
+            apiKey: "AIzaSyA3dlCGsZkTTnZ06G5qYxhm1yFqYBPYU20", 
+            authDomain: "app-vaz-pre-moldados.firebaseapp.com", 
+            projectId: "app-vaz-pre-moldados", 
+            storageBucket: "app-vaz-pre-moldados.firebasestorage.app", 
+            messagingSenderId: "1088449305463", 
+            appId: "1:1088449305463:web:154d88e0ce9f208ab19f72",
+            measurementId: "G-0NCEJV13F2"
+        };
+
+        // Inicializar Firebase
+        let db = null;
+        let auth = null;
+        let firebaseReady = false;
+
+        try {
+            if (firebaseConfig.apiKey !== "COLE_AQUI_SUA_API_KEY") {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                auth = firebase.auth();
+                firebaseReady = true;
+                console.log("Firebase conectado!");
+            } else {
+                console.warn("Firebase não configurado. O app funcionará apenas localmente (localStorage) até você configurar as chaves no código.");
+            }
+        } catch (e) {
+            console.error("Erro ao inicializar Firebase:", e);
+        }
+
         // --- CONSTANTS & INITIAL DATA ---
         const DEMO_USERS = [
             { email: 'admin@empresa.com', password: '123456', name: 'Admin', role: 'Administrador', avatar: 'https://ui-avatars.com/api/?name=Admin&background=0ea5e9&color=fff' },
@@ -531,16 +569,20 @@
         }
 
         function saveData() {
+            // Salvar localmente como fallback imediato
             try {
                 localStorage.setItem('financeProData', JSON.stringify(appState));
             } catch (_) {
-                const loginScreen = document.getElementById('login-screen');
-                const isOnLogin = loginScreen && !loginScreen.classList.contains('hidden');
-                if (isOnLogin) {
-                    setLoginError('Armazenamento do navegador bloqueado. Use “Reparar Acesso” ou abra no Chrome fora do modo anônimo.');
-                } else {
-                    showToast('Armazenamento do navegador bloqueado. Alguns dados podem não ser salvos.', 'error');
-                }
+                console.warn("Erro ao salvar no localStorage");
+            }
+
+            // Salvar no Firebase se configurado
+            if (firebaseReady && db) {
+                db.collection('appData').doc('globalState').set(appState)
+                    .catch(err => {
+                        console.error("Erro ao sincronizar com Firebase:", err);
+                        showToast("Erro de sincronização com a nuvem", "error");
+                    });
             }
         }
 
@@ -903,7 +945,7 @@
                             stock: 0
                         };
                     }
-                    pcpNeeds[item.productId].needed += item.qty;
+                    pcpNeeds[item.productId].needed += (item.isMeter ? (item.units || 0) : item.qty);
                 });
             });
 
@@ -4067,7 +4109,7 @@
             const totalSalesCount = completedSales.length;
             const pendingDeliveriesCount = pendingSales.length;
             const avgTicket = totalSalesCount > 0 ? (completedSales.reduce((acc, s) => acc + s.total, 0) / totalSalesCount) : 0;
-            const totalItemsSold = completedSales.reduce((acc, s) => acc + s.items.reduce((sum, i) => sum + i.qty, 0), 0);
+            const totalItemsSold = completedSales.reduce((acc, s) => acc + s.items.reduce((sum, i) => sum + (i.isMeter ? (i.units || 0) : i.qty), 0), 0);
 
             const html = `
                 <div class="animate-fade-in space-y-6">
@@ -7935,7 +7977,35 @@
         function initApp() {
             if (!currentUser) return;
 
-            // Migração: Popular sale.fee a partir das transações se estiver faltando
+            // --- Lógica do Firebase ---
+            if (firebaseReady && db) {
+                // Ouvinte em tempo real para sincronismo entre dispositivos
+                db.collection('appData').doc('globalState').onSnapshot((doc) => {
+                    if (doc.exists) {
+                        const cloudData = doc.data();
+                        // Atualiza o estado local com os dados da nuvem
+                        appState = cloudData;
+                        // Salva localmente como backup
+                        localStorage.setItem('financeProData', JSON.stringify(appState));
+                        // Atualiza a tela se estiver logado
+                        if (currentUser) renderContent();
+                    } else {
+                        // Se não existe na nuvem, mas temos localmente, migramos
+                        const localData = localStorage.getItem('financeProData');
+                        if (localData) {
+                            console.log("Migrando dados locais para o Firebase...");
+                            db.collection('appData').doc('globalState').set(JSON.parse(localData))
+                                .then(() => console.log("Migração concluída!"))
+                                .catch(err => console.error("Erro na migração:", err));
+                        }
+                    }
+                }, (err) => {
+                    console.error("Erro no ouvinte do Firebase:", err);
+                    showToast("Erro de conexão em tempo real", "error");
+                });
+            }
+
+            // Migração legada: Popular sale.fee a partir das transações se estiver faltando
             if (Array.isArray(appState.sales)) {
                 appState.sales.forEach(s => {
                     if (s.status === 'completed' && (s.fee === undefined || s.fee === 0)) {
