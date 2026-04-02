@@ -300,9 +300,21 @@
         };
 
         // --- ENVIRONMENT DETECTION ---
-        // Se a URL tiver ?env=test, usa o ambiente de teste. Caso contrário, produção.
+        // Lógica de proteção: No PC/Localhost, o padrão é TESTE. No celular, PRODUÇÃO.
         const urlParams = new URLSearchParams(window.location.search);
-        const currentEnv = urlParams.get('env') === 'test' ? 'test' : 'prod';
+        let defaultEnv = 'prod';
+        
+        // Se estiver rodando no PC (localhost ou arquivo local), o padrão é TESTE
+        const isPC = window.location.hostname === 'localhost' || 
+                     window.location.hostname === '127.0.0.1' || 
+                     window.location.protocol === 'file:';
+        
+        if (isPC) {
+            defaultEnv = 'test';
+        }
+
+        // Prioridade: 1. Parâmetro na URL (?env=prod ou ?env=test) / 2. Padrão detectado
+        const currentEnv = urlParams.get('env') || defaultEnv;
         const dbDocName = currentEnv === 'test' ? 'globalState_test' : 'globalState_prod';
 
         // Inicializar Firebase
@@ -318,6 +330,9 @@
                 auth = firebase.auth();
                 firebaseReady = true;
                 console.log(`Firebase conectado no ambiente: ${currentEnv.toUpperCase()}`);
+                if (isPC && currentEnv === 'prod') {
+                    console.warn("⚠️ ALERTA: Você está acessando os dados de PRODUÇÃO em um computador. Alterações aqui afetarão os celulares da empresa!");
+                }
             }
         } catch (e) {
             console.error("Erro ao inicializar Firebase:", e);
@@ -572,6 +587,12 @@
         }
 
         function saveData() {
+            // Se for PC e estiver em produção sem querer, avisar antes de salvar
+            if (isPC && currentEnv === 'prod' && !cloudSyncEnabled) {
+                console.warn("Salvamento em produção bloqueado no PC até sincronismo manual.");
+                return;
+            }
+
             // Salvar localmente como fallback imediato
             try {
                 localStorage.setItem('financeProData', JSON.stringify(appState));
@@ -839,16 +860,23 @@
 
         function toggleBalanceVisibility() {
             appState.config.showBalance = !appState.config.showBalance;
-            saveData();
+            
+            // Salvar apenas localmente para ser instantâneo e não causar re-renderização pelo Firebase
+            try {
+                localStorage.setItem('financeProData', JSON.stringify(appState));
+            } catch (_) {}
+
             if (currentTab === 'dashboard') {
+                const show = !!appState.config.showBalance;
+                
+                // Atualiza os valores na tela sem renderizar o dashboard inteiro
+                const balance = appState.transactions.reduce((acc, t) => acc + (t.type === 'entrada' ? t.amount : -t.amount), 0);
                 const now = new Date();
                 const todayStr = now.toISOString().split('T')[0];
                 const currentMonth = todayStr.substring(0, 7);
-                const balance = appState.transactions.reduce((acc, t) => acc + (t.type === 'entrada' ? t.amount : -t.amount), 0);
                 const monthlyIn = appState.transactions.filter(t => t.type === 'entrada' && t.date.startsWith(currentMonth)).reduce((acc, t) => acc + t.amount, 0);
                 const monthlyOut = appState.transactions.filter(t => t.type === 'saida' && t.date.startsWith(currentMonth)).reduce((acc, t) => acc + t.amount, 0);
 
-                const show = !!appState.config.showBalance;
                 const elBalance = document.getElementById('dash-balance-value');
                 const elIn = document.getElementById('dash-monthly-in');
                 const elOut = document.getElementById('dash-monthly-out');
@@ -860,9 +888,21 @@
                 if (elOut) elOut.innerText = show ? formatCurrency(monthlyOut) : '••••••';
                 if (elOpen) elOpen.classList.toggle('hidden', !show);
                 if (elClosed) elClosed.classList.toggle('hidden', show);
+                
+                // Também atualiza no Topbar se houver saldo lá
+                const topBalance = document.getElementById('topbar-balance');
+                if (topBalance) topBalance.innerText = show ? formatCurrency(balance) : '••••••';
+                
                 return;
             }
-            renderDashboard();
+            
+            // Se estiver em outra aba (como o Caixa), atualiza a aba atual
+            if (currentTab === 'caixa') {
+                renderCaixa();
+                return;
+            }
+            
+            renderContent();
         }
 
         function switchVendasTab(subTabId) {
@@ -8030,8 +8070,19 @@
         }
 
         async function clearData() {
-            const ok = confirm('ATENÇÃO: Isso vai ZERAR o app (dados, login e tema) permanentemente. Continuar?');
+            const ok = confirm('ATENÇÃO: Isso vai ZERAR o app permanentemente. Se o sincronismo estiver ativo, os dados também serão apagados da nuvem. Continuar?');
             if (!ok) return;
+
+            // Se o sincronismo estiver ativo, apaga também do Firebase
+            if (firebaseReady && db && cloudSyncEnabled) {
+                try {
+                    await db.collection('appData').doc(dbDocName).delete();
+                    console.log("Dados apagados da nuvem.");
+                } catch (err) {
+                    console.error("Erro ao apagar dados da nuvem:", err);
+                    alert("Erro ao apagar dados da nuvem. O app será zerado apenas localmente.");
+                }
+            }
 
             try {
                 localStorage.clear();
@@ -8123,6 +8174,9 @@
             }
 
             switchTab('dashboard');
+            if (isPC && currentEnv === 'prod') {
+                showToast("⚠️ ATENÇÃO: Modo PRODUÇÃO no PC!", "error");
+            }
             try {
                 lucide.createIcons();
             } catch (_) {
