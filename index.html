@@ -986,7 +986,17 @@
             
             let resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
             let resetDate = new Date(resetDateStr);
-            let daysElapsed = Math.max(1, Math.ceil((now - resetDate) / (1000 * 60 * 60 * 24)));
+            const todayDate = new Date(todayStr);
+            let daysElapsed = Math.floor((todayDate - resetDate) / (1000 * 60 * 60 * 24)) + 1;
+
+            // Auto-reset se passar de 30 dias (mesma lógica do dashboard)
+            if (daysElapsed > 30) {
+                appState.config.breakEvenResetDate = todayStr;
+                saveData();
+                resetDateStr = todayStr;
+                resetDate = new Date(resetDateStr);
+                daysElapsed = 1;
+            }
             
             const monthlyProductionMap = new Map();
             appState.production.filter(p => p.date >= resetDateStr).forEach(p => {
@@ -6978,6 +6988,40 @@
             applyRealCostFilters();
         }
 
+        function setReportVendasPreset(preset) {
+            const now = new Date();
+            const today = now.toISOString().split('T')[0];
+            let start = '';
+            let end = '';
+
+            if (preset === 'this_month') {
+                const m = now.toISOString().slice(0, 7);
+                const range = getMonthRange(m);
+                start = range.start;
+                end = range.end;
+            } else if (preset === 'last_month') {
+                const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                const m = d.toISOString().slice(0, 7);
+                const range = getMonthRange(m);
+                start = range.start;
+                end = range.end;
+            } else if (preset === 'last_30') {
+                const d = new Date(now);
+                d.setDate(d.getDate() - 30);
+                start = d.toISOString().split('T')[0];
+                end = today;
+            } else if (preset === 'all') {
+                start = '';
+                end = '';
+            }
+
+            const startEl = document.getElementById('report-vendas-start');
+            const endEl = document.getElementById('report-vendas-end');
+            if (startEl) startEl.value = start;
+            if (endEl) endEl.value = end;
+            generateReport('vendas');
+        }
+
         function generateReport(type) {
             let title = "";
             let content = "";
@@ -7029,14 +7073,66 @@
                 `;
             } else if (type === 'vendas') {
                 title = "Relatório de Vendas e Rentabilidade";
-                const completedSales = appState.sales.filter(s => s.status === 'completed');
+                
+                // Filtros de Data
+                const filterStart = document.getElementById('report-vendas-start')?.value || '';
+                const filterEnd = document.getElementById('report-vendas-end')?.value || '';
+
+                const completedSales = appState.sales.filter(s => {
+                    const matchesStatus = s.status === 'completed';
+                    const matchesStart = !filterStart || s.date >= filterStart;
+                    const matchesEnd = !filterEnd || s.date <= filterEnd;
+                    return matchesStatus && matchesStart && matchesEnd;
+                });
+
                 const totalGross = completedSales.reduce((acc, s) => acc + s.total, 0);
                 const totalFees = completedSales.reduce((acc, s) => acc + (s.fee || 0), 0);
                 const totalNet = totalGross - totalFees;
                 const countSales = completedSales.length;
+
+                // Ranking de Produtos Vendidos (Filtrado)
+                const salesByProduct = {};
+                completedSales.forEach(s => {
+                    if (s.items && Array.isArray(s.items)) {
+                        s.items.forEach(item => {
+                            const name = item.name || 'Produto';
+                            const qty = item.isMeter ? (item.units || 0) : item.qty;
+                            salesByProduct[name] = (salesByProduct[name] || 0) + qty;
+                        });
+                    }
+                });
+                const ranking = Object.entries(salesByProduct)
+                    .map(([name, qty]) => ({ name, qty }))
+                    .sort((a, b) => b.qty - a.qty);
+                const totalQty = ranking.reduce((acc, p) => acc + p.qty, 0);
                 
                 content = `
                     <div class="space-y-6">
+                        <!-- Filtros de Relatório (Estilo DRE) -->
+                        <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 p-4 mb-6">
+                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                                <button onclick="setReportVendasPreset('this_month')" class="py-2 rounded-xl bg-primary-50 dark:bg-primary-900/20 text-primary-600 font-black text-[9px] uppercase tracking-widest hover:bg-primary-100 transition-all">Este mês</button>
+                                <button onclick="setReportVendasPreset('last_month')" class="py-2 rounded-xl bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-200 font-black text-[9px] uppercase tracking-widest hover:bg-slate-100 transition-all">Mês passado</button>
+                                <button onclick="setReportVendasPreset('last_30')" class="py-2 rounded-xl bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-200 font-black text-[9px] uppercase tracking-widest hover:bg-slate-100 transition-all">Últimos 30d</button>
+                                <button onclick="setReportVendasPreset('all')" class="py-2 rounded-xl bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-200 font-black text-[9px] uppercase tracking-widest hover:bg-slate-100 transition-all">Tudo</button>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 ml-1">Início</p>
+                                    <input type="date" id="report-vendas-start" value="${filterStart}" class="w-full bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-primary-500 shadow-sm">
+                                </div>
+                                <div>
+                                    <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 ml-1">Fim</p>
+                                    <input type="date" id="report-vendas-end" value="${filterEnd}" class="w-full bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl p-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-primary-500 shadow-sm">
+                                </div>
+                            </div>
+
+                            <button onclick="generateReport('vendas')" class="w-full mt-4 py-3 bg-primary-600 text-white font-black rounded-2xl hover:brightness-95 transition-all active:scale-95 uppercase text-[10px] tracking-widest shadow-lg shadow-primary-500/20">
+                                Aplicar Filtros
+                            </button>
+                        </div>
+
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             <div class="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-xl border border-purple-100 dark:border-purple-800">
                                 <p class="text-[10px] font-bold text-purple-600 uppercase mb-1">Faturamento Bruto</p>
@@ -7049,6 +7145,40 @@
                             <div class="p-4 bg-success/10 rounded-xl border border-success/20">
                                 <p class="text-[10px] font-bold text-success uppercase mb-1">Receita Líquida</p>
                                 <p class="text-lg font-black text-success">${formatCurrency(totalNet)}</p>
+                            </div>
+                        </div>
+
+                        <!-- Ranking de Vendas por Produto -->
+                        <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 overflow-hidden shadow-sm">
+                            <div class="p-3 bg-slate-50 dark:bg-slate-700/50 border-b border-slate-100 dark:border-slate-700">
+                                <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                                    <i data-lucide="award" class="w-3.5 h-3.5 text-amber-500"></i>
+                                    Ranking de Produtos Vendidos
+                                </h4>
+                            </div>
+                            <div class="p-4 space-y-4">
+                                ${ranking.length > 0 ? ranking.map((p, index) => {
+                                    const percentage = totalQty > 0 ? (p.qty / totalQty * 100).toFixed(0) : 0;
+                                    const colors = ['bg-primary-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-violet-500'];
+                                    const color = colors[index % colors.length];
+                                    return `
+                                        <div>
+                                            <div class="flex justify-between items-center mb-1">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="w-5 h-5 rounded-md ${index === 0 ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'} flex items-center justify-center text-[9px] font-black">${index + 1}º</span>
+                                                    <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200 uppercase">${p.name}</span>
+                                                </div>
+                                                <div class="text-right">
+                                                    <span class="text-[11px] font-black dark:text-white">${p.qty} <span class="text-[8px] text-slate-400">un</span></span>
+                                                    <span class="text-[9px] font-bold text-slate-400 ml-1">${percentage}%</span>
+                                                </div>
+                                            </div>
+                                            <div class="w-full h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                <div class="h-full ${color} rounded-full" style="width: ${percentage}%"></div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('') : '<p class="text-center text-[10px] text-slate-400 italic py-2 uppercase tracking-widest">Nenhuma venda registrada</p>'}
                             </div>
                         </div>
 
