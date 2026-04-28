@@ -678,6 +678,57 @@
             }
         }
 
+        /**
+         * Gerencia o ciclo de 30 dias do ponto de equilíbrio.
+         * Retorna as informações do ciclo atual e realiza o reset automático se necessário.
+         */
+        function getBreakEvenConfig() {
+            const now = new Date();
+            const todayStr = now.toISOString().split('T')[0];
+            const currentMonth = todayStr.substring(0, 7);
+            
+            if (!appState.config) appState.config = {};
+            
+            // Inicializa se não existir
+            if (!appState.config.breakEvenResetDate) {
+                appState.config.breakEvenResetDate = currentMonth + '-01';
+                saveData();
+            }
+
+            // Cálculo robusto de dias passados usando UTC
+            const [y1, m1, d1] = appState.config.breakEvenResetDate.split('-').map(Number);
+            const [y2, m2, d2] = todayStr.split('-').map(Number);
+            
+            const date1 = Date.UTC(y1, m1 - 1, d1);
+            const date2 = Date.UTC(y2, m2 - 1, d2);
+            
+            const diffTime = date2 - date1;
+            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            let daysElapsed = diffDays + 1;
+
+            // Se passou de 30 dias, reinicia o ciclo
+            if (daysElapsed > 30) {
+                appState.config.breakEvenResetDate = todayStr;
+                saveData();
+                daysElapsed = 1;
+            }
+
+            const resetDateStr = appState.config.breakEvenResetDate;
+            
+            // Calcula a data final do ciclo (reset + 29 dias)
+            const rObj = new Date(resetDateStr + 'T00:00:00Z');
+            const endObj = new Date(rObj);
+            endObj.setUTCDate(rObj.getUTCDate() + 29);
+            const endDateStr = endObj.toISOString().split('T')[0];
+
+            return {
+                resetDateStr,
+                endDateStr,
+                daysElapsed,
+                todayStr
+            };
+        }
+
         function showToast(message, type = 'success') {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
@@ -989,8 +1040,11 @@
             appState.config.breakEvenResetDate = new Date().toISOString().split('T')[0];
             saveData();
             showToast('Novo ciclo de equilíbrio iniciado!');
+            // Atualiza a tela atual para refletir o reset
             if (currentTab === 'dashboard') renderDashboard();
-            if (currentTab === 'metas') renderMetas();
+            else if (currentTab === 'metas') renderMetas();
+            else if (currentTab === 'producao') renderProducao();
+            else if (currentTab === 'vendas') renderVendas();
         }
 
         function confirmResetBreakEven() {
@@ -1046,23 +1100,7 @@
 
         function renderProducao() {
             // Cálculo de Produção (Sincronizado com Ponto de Equilíbrio)
-            const now = new Date();
-            const todayStr = now.toISOString().split('T')[0];
-            const currentMonth = todayStr.substring(0, 7);
-            
-            let resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
-            let resetDate = new Date(resetDateStr);
-            const todayDate = new Date(todayStr);
-            let daysElapsed = Math.floor((todayDate - resetDate) / (1000 * 60 * 60 * 24)) + 1;
-
-            // Auto-reset se passar de 30 dias (mesma lógica do dashboard)
-            if (daysElapsed > 30) {
-                appState.config.breakEvenResetDate = todayStr;
-                saveData();
-                resetDateStr = todayStr;
-                resetDate = new Date(resetDateStr);
-                daysElapsed = 1;
-            }
+            const { resetDateStr, daysElapsed } = getBreakEvenConfig();
             
             const monthlyProductionMap = new Map();
             appState.production.filter(p => p.date >= resetDateStr).forEach(p => {
@@ -1560,22 +1598,8 @@
         }
 
         function renderDashboardSubTab() {
-            const now = new Date();
-            const todayStr = now.toISOString().split('T')[0];
-            const currentMonth = todayStr.substring(0, 7);
-            
             // LÓGICA DE DATA DE RESET (Ponto de Equilíbrio)
-            let resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
-            let resetDate = new Date(resetDateStr);
-            const todayDate = new Date(todayStr);
-            let daysElapsed = Math.floor((todayDate - resetDate) / (1000 * 60 * 60 * 24)) + 1;
-            if (daysElapsed > 30) {
-                appState.config.breakEvenResetDate = todayStr;
-                saveData();
-                resetDateStr = todayStr;
-                resetDate = new Date(resetDateStr);
-                daysElapsed = 1;
-            }
+            const { resetDateStr, daysElapsed } = getBreakEvenConfig();
 
             // Recalcular variáveis necessárias para as sub-abas
             const salariesCosts = appState.employees.reduce((acc, emp) => acc + (emp.salary || 0), 0);
@@ -4496,25 +4520,8 @@
         }
 
         function renderVendasHome() {
-            const now = new Date();
-            const todayStr = now.toISOString().split('T')[0];
-            const currentMonth = todayStr.substring(0, 7);
-            let resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
-            const resetDate = new Date(resetDateStr);
-            let endDate = new Date(resetDate);
-            endDate.setDate(resetDate.getDate() + 29);
-            let endDateStr = endDate.toISOString().split('T')[0];
-            let daysElapsed = Math.floor((new Date(todayStr) - resetDate) / (1000 * 60 * 60 * 24)) + 1;
-            if (daysElapsed > 30) {
-                appState.config.breakEvenResetDate = todayStr;
-                saveData();
-                resetDateStr = todayStr;
-                const nd = new Date(resetDateStr);
-                endDate = new Date(nd);
-                endDate.setDate(nd.getDate() + 29);
-                endDateStr = endDate.toISOString().split('T')[0];
-                daysElapsed = 1;
-            }
+            const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
+            
             const completedSales = appState.sales.filter(s => s.status === 'completed' && s.date >= resetDateStr && s.date <= endDateStr);
             const pendingSales = appState.sales.filter(s => s.status === 'pending');
             
@@ -7655,22 +7662,10 @@
         // --- GOALS RENDER ---
         function renderMetas() {
             const now = new Date();
-            const currentMonth = now.toISOString().substring(0, 7);
             const currentMonthName = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
             
             // LÓGICA DE DATA DE RESET (Consistente com Dashboard)
-            let resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
-            let resetDate = new Date(resetDateStr);
-            const todayStr = now.toISOString().split('T')[0];
-            const todayDate = new Date(todayStr);
-            let daysElapsed = Math.floor((todayDate - resetDate) / (1000 * 60 * 60 * 24)) + 1;
-            if (daysElapsed > 30) {
-                appState.config.breakEvenResetDate = todayStr;
-                saveData();
-                resetDateStr = todayStr;
-                resetDate = new Date(resetDateStr);
-                daysElapsed = 1;
-            }
+            const { resetDateStr, daysElapsed } = getBreakEvenConfig();
 
             // Ponto de Equilíbrio Calculations
             const salariesCosts = appState.employees.reduce((acc, emp) => acc + (emp.salary || 0), 0);
