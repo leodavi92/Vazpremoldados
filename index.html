@@ -635,8 +635,23 @@
         // --- UTILS ---
         const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
         const formatDate = (dateStr) => {
-            const date = new Date(dateStr);
-            return date.toLocaleDateString('pt-BR');
+            if (!dateStr) return '';
+            // Se já for uma data formatada em pt-BR (raro mas possível), retorna ela mesma
+            if (typeof dateStr === 'string' && dateStr.includes('/')) return dateStr;
+            
+            try {
+                // Tenta tratar como YYYY-MM-DD para evitar problemas de fuso horário
+                const parts = dateStr.split('-');
+                if (parts.length === 3) {
+                    const [y, m, d] = parts.map(Number);
+                    const date = new Date(y, m - 1, d);
+                    return date.toLocaleDateString('pt-BR');
+                }
+                const date = new Date(dateStr);
+                return isNaN(date.getTime()) ? dateStr : date.toLocaleDateString('pt-BR');
+            } catch (_) {
+                return dateStr;
+            }
         };
         function composeCompanyAddress(cfg) {
             const parts = [];
@@ -656,17 +671,17 @@
         }
 
         function saveData() {
-            // Se for PC e estiver em produção sem querer, avisar antes de salvar
-            if (isPC && currentEnv === 'prod' && !cloudSyncEnabled) {
-                console.warn("Salvamento em produção bloqueado no PC até sincronismo manual.");
-                return;
-            }
-
-            // Salvar localmente como fallback imediato
+            // Salvar localmente como fallback imediato - SEMPRE salvar localmente
             try {
                 localStorage.setItem('financeProData', JSON.stringify(appState));
             } catch (_) {
                 console.warn("Erro ao salvar no localStorage");
+            }
+
+            // Se for PC e estiver em produção, o bloqueio é apenas para o Cloud Sync automático
+            if (isPC && currentEnv === 'prod' && !cloudSyncEnabled) {
+                // Não bloqueamos o localStorage, apenas avisamos que não vai para a nuvem
+                return;
             }
 
             // Salvar no Firebase se configurado e habilitado
@@ -684,42 +699,59 @@
          */
         function getBreakEvenConfig() {
             const now = new Date();
-            const todayStr = now.toISOString().split('T')[0];
+            // Data de hoje em formato YYYY-MM-DD local
+            const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
             const currentMonth = todayStr.substring(0, 7);
             
             if (!appState.config) appState.config = {};
             
-            // Inicializa se não existir
+            // Inicialização segura se não existir
             if (!appState.config.breakEvenResetDate) {
                 appState.config.breakEvenResetDate = currentMonth + '-01';
                 saveData();
             }
 
-            // Cálculo robusto de dias passados usando UTC
+            // Parse das datas garantindo que usamos a parte local
             const [y1, m1, d1] = appState.config.breakEvenResetDate.split('-').map(Number);
             const [y2, m2, d2] = todayStr.split('-').map(Number);
             
-            const date1 = Date.UTC(y1, m1 - 1, d1);
-            const date2 = Date.UTC(y2, m2 - 1, d2);
+            const date1 = new Date(y1, m1 - 1, d1);
+            const date2 = new Date(y2, m2 - 1, d2);
             
-            const diffTime = date2 - date1;
+            // Se date1 for inválida, resetar para hoje
+            if (isNaN(date1.getTime())) {
+                appState.config.breakEvenResetDate = todayStr;
+                saveData();
+                return getBreakEvenConfig();
+            }
+
+            const diffTime = date2.getTime() - date1.getTime();
             const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
             let daysElapsed = diffDays + 1;
 
-            // Se passou de 30 dias, reinicia o ciclo
+            // Reset automático após 30 dias (no 31º dia)
             if (daysElapsed > 30) {
                 appState.config.breakEvenResetDate = todayStr;
                 saveData();
                 daysElapsed = 1;
+                
+                // Recalcular com a nova data de hoje
+                const endObj = new Date(y2, m2 - 1, d2);
+                endObj.setDate(endObj.getDate() + 29);
+                const endDateStr = endObj.getFullYear() + '-' + String(endObj.getMonth() + 1).padStart(2, '0') + '-' + String(endObj.getDate()).padStart(2, '0');
+                
+                return {
+                    resetDateStr: todayStr,
+                    endDateStr,
+                    daysElapsed: 1,
+                    todayStr
+                };
             }
 
             const resetDateStr = appState.config.breakEvenResetDate;
-            
-            // Calcula a data final do ciclo (reset + 29 dias)
-            const rObj = new Date(resetDateStr + 'T00:00:00Z');
-            const endObj = new Date(rObj);
-            endObj.setUTCDate(rObj.getUTCDate() + 29);
-            const endDateStr = endObj.toISOString().split('T')[0];
+            const endObj = new Date(date1);
+            endObj.setDate(date1.getDate() + 29);
+            const endDateStr = endObj.getFullYear() + '-' + String(endObj.getMonth() + 1).padStart(2, '0') + '-' + String(endObj.getDate()).padStart(2, '0');
 
             return {
                 resetDateStr,
@@ -1031,13 +1063,13 @@
         }
 
         function resetBreakEven() {
-            if (confirm('Deseja iniciar um NOVO CICLO para o Ponto de Equilíbrio? Isso definirá a data de hoje como o novo ponto de partida para o cálculo de metas e cobertura de custos.')) {
-                resetBreakEvenNow();
-            }
+            confirmResetBreakEven();
         }
 
         function resetBreakEvenNow() {
-            appState.config.breakEvenResetDate = new Date().toISOString().split('T')[0];
+            const now = new Date();
+            const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+            appState.config.breakEvenResetDate = todayStr;
             saveData();
             showToast('Novo ciclo de equilíbrio iniciado!');
             // Atualiza a tela atual para refletir o reset
@@ -1103,44 +1135,45 @@
             const { resetDateStr, daysElapsed } = getBreakEvenConfig();
             
             const monthlyProductionMap = new Map();
-            appState.production.filter(p => p.date >= resetDateStr).forEach(p => {
+            (appState.production || []).filter(p => p.date >= resetDateStr).forEach(p => {
                 const name = p.productName || 'Produto';
-                monthlyProductionMap.set(name, (monthlyProductionMap.get(name) || 0) + p.qty);
+                monthlyProductionMap.set(name, (monthlyProductionMap.get(name) || 0) + (p.qty || 0));
             });
             const monthlyProduction = Array.from(monthlyProductionMap.entries())
                 .map(([name, qty]) => ({ name, qty }))
                 .sort((a, b) => b.qty - a.qty);
             
-            const totalMonthly = monthlyProduction.reduce((acc, p) => acc + p.qty, 0);
+            const totalMonthly = monthlyProduction.reduce((acc, p) => acc + (p.qty || 0), 0);
 
             // Cálculo de Necessidade de Produção (PCP)
             const pcpNeeds = {};
-            appState.sales.filter(s => s.status === 'pending').forEach(sale => {
-                sale.items.forEach(item => {
+            (appState.sales || []).filter(s => s.status === 'pending').forEach(sale => {
+                (sale.items || []).forEach(item => {
+                    if (!item.productId) return;
                     if (!pcpNeeds[item.productId]) {
                         pcpNeeds[item.productId] = {
-                            name: item.name,
+                            name: item.name || 'Produto',
                             needed: 0,
                             stock: 0
                         };
                     }
-                    pcpNeeds[item.productId].needed += (item.isMeter ? (item.units || 0) : item.qty);
+                    pcpNeeds[item.productId].needed += (item.isMeter ? (item.units || 0) : (item.qty || 0));
                 });
             });
 
             // Cruzar com estoque atual
             const pcpAlerts = [];
             Object.keys(pcpNeeds).forEach(id => {
-                const product = appState.inventory.find(p => p.id == id);
+                const product = (appState.inventory || []).find(p => p.id == id);
                 if (product) {
-                    pcpNeeds[id].stock = product.stock;
-                    const short = pcpNeeds[id].needed - product.stock;
+                    pcpNeeds[id].stock = product.stock || 0;
+                    const short = pcpNeeds[id].needed - (product.stock || 0);
                     if (short > 0) {
                         pcpAlerts.push({
                             id: id,
                             name: pcpNeeds[id].name,
                             needed: pcpNeeds[id].needed,
-                            stock: product.stock,
+                            stock: product.stock || 0,
                             toProduce: short
                         });
                     }
@@ -1199,7 +1232,12 @@
                             <i data-lucide="bar-chart-2" class="w-4 h-4"></i>
                             Produção no Ciclo (Dia ${daysElapsed}/30)
                         </h4>
-                        <span class="text-[10px] font-black text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-3 py-1 rounded-full uppercase tracking-tighter">Total: ${totalMonthly} un</span>
+                        <div class="flex items-center gap-3">
+                            <span class="text-[10px] font-black text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-3 py-1 rounded-full uppercase tracking-tighter">Total: ${totalMonthly} un</span>
+                            <button onclick="confirmResetBreakEven()" class="p-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-red-500 hover:text-white rounded-lg transition-all" title="Reiniciar Ciclo">
+                                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="p-4 sm:p-6">
                         ${monthlyProduction.length > 0 ? `
@@ -1602,22 +1640,22 @@
             const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
 
             // Recalcular variáveis necessárias para as sub-abas
-            const salariesCosts = appState.employees.reduce((acc, emp) => acc + (emp.salary || 0), 0);
-            const baseFixedCosts = appState.fixedAccounts.reduce((acc, a) => acc + a.amount, 0) + salariesCosts;
+            const salariesCosts = (appState.employees || []).reduce((acc, emp) => acc + (emp.salary || 0), 0);
+            const baseFixedCosts = (appState.fixedAccounts || []).reduce((acc, a) => acc + (a.amount || 0), 0) + salariesCosts;
             
             // Gastos reais desde o último reset
-            const actualExpenses = appState.transactions
+            const actualExpenses = (appState.transactions || [])
                 .filter(t => t.type === 'saida' && t.date >= resetDateStr)
-                .reduce((acc, t) => acc + t.amount, 0);
+                .reduce((acc, t) => acc + (t.amount || 0), 0);
 
             // Vendas desde o último reset
-            const monthlySales = appState.sales.filter(s => s.date >= resetDateStr && s.status === 'completed');
+            const monthlySales = (appState.sales || []).filter(s => s.date >= resetDateStr && s.status === 'completed');
             
-            const totalRevenue = monthlySales.reduce((acc, s) => acc + s.total, 0);
+            const totalRevenue = monthlySales.reduce((acc, s) => acc + (s.total || 0), 0);
             const totalVariableCosts = monthlySales.reduce((acc, s) => {
-                const materialsCost = s.items.reduce((itemAcc, item) => {
-                    const product = appState.inventory.find(p => p.id === item.productId);
-                    return itemAcc + (product ? (product.costPrice * item.qty) : 0);
+                const materialsCost = (s.items || []).reduce((itemAcc, item) => {
+                    const product = (appState.inventory || []).find(p => p.id === item.productId);
+                    return itemAcc + (product ? ((product.costPrice || 0) * (item.qty || 0)) : 0);
                 }, 0);
                 return acc + materialsCost + (s.deliveryHelperCostTotal || 0) + (s.fee || 0);
             }, 0);
@@ -4523,13 +4561,13 @@
         function renderVendasHome() {
             const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
             
-            const completedSales = appState.sales.filter(s => s.status === 'completed' && s.date >= resetDateStr && s.date <= endDateStr);
-            const pendingSales = appState.sales.filter(s => s.status === 'pending');
+            const completedSales = (appState.sales || []).filter(s => s.status === 'completed' && s.date >= resetDateStr && s.date <= endDateStr);
+            const pendingSales = (appState.sales || []).filter(s => s.status === 'pending');
             
             const totalSalesCount = completedSales.length;
             const pendingDeliveriesCount = pendingSales.length;
-            const avgTicket = totalSalesCount > 0 ? (completedSales.reduce((acc, s) => acc + s.total, 0) / totalSalesCount) : 0;
-            const totalItemsSold = completedSales.reduce((acc, s) => acc + s.items.reduce((sum, i) => sum + (i.isMeter ? (i.units || 0) : i.qty), 0), 0);
+            const avgTicket = totalSalesCount > 0 ? (completedSales.reduce((acc, s) => acc + (s.total || 0), 0) / totalSalesCount) : 0;
+            const totalItemsSold = completedSales.reduce((acc, s) => acc + (s.items || []).reduce((sum, i) => sum + (i.isMeter ? (i.units || 0) : (i.qty || 0)), 0), 0);
 
             const html = `
                 <div class="animate-fade-in space-y-6">
@@ -4575,10 +4613,15 @@
                                         <span class="text-lg font-bold text-slate-400 uppercase tracking-widest">Vendas</span>
                                     </div>
                                     <p class="text-[10px] text-slate-400 uppercase mt-1">Ciclo 30 dias • ${formatDate(resetDateStr)} a ${formatDate(endDateStr)}</p>
-                                    <p class="text-xs text-green-600 font-bold uppercase mt-2 flex items-center gap-1">
-                                        <i data-lucide="check-circle" class="w-3 h-3"></i>
-                                        Operação ativa e saudável
-                                    </p>
+                                    <div class="flex items-center gap-2 mt-2">
+                                        <p class="text-xs text-green-600 font-bold uppercase flex items-center gap-1">
+                                            <i data-lucide="check-circle" class="w-3 h-3"></i>
+                                            Operação ativa
+                                        </p>
+                                        <button onclick="confirmResetBreakEven()" class="ml-2 p-1.5 bg-slate-50 dark:bg-slate-700 hover:bg-red-500 hover:text-white rounded-lg transition-all text-slate-400" title="Reiniciar Ciclo">
+                                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                                        </button>
+                                    </div>
                                 </div>
                                 
                                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-8 w-full md:w-auto">
@@ -7666,25 +7709,25 @@
             const currentMonthName = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
             
             // LÓGICA DE DATA DE RESET (Consistente com Dashboard)
-            const { resetDateStr, daysElapsed } = getBreakEvenConfig();
+            const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
 
             // Ponto de Equilíbrio Calculations
-            const salariesCosts = appState.employees.reduce((acc, emp) => acc + (emp.salary || 0), 0);
-            const baseFixedCosts = appState.fixedAccounts.reduce((acc, a) => acc + a.amount, 0) + salariesCosts;
+            const salariesCosts = (appState.employees || []).reduce((acc, emp) => acc + (emp.salary || 0), 0);
+            const baseFixedCosts = (appState.fixedAccounts || []).reduce((acc, a) => acc + (a.amount || 0), 0) + salariesCosts;
             
             // Gastos reais desde o último reset
-            const actualExpenses = appState.transactions
+            const actualExpenses = (appState.transactions || [])
                 .filter(t => t.type === 'saida' && t.date >= resetDateStr)
-                .reduce((acc, t) => acc + t.amount, 0);
+                .reduce((acc, t) => acc + (t.amount || 0), 0);
 
             // Vendas desde o último reset
-            const monthlySales = appState.sales.filter(s => s.date >= resetDateStr && s.status === 'completed');
-            const totalRevenue = monthlySales.reduce((acc, s) => acc + s.total, 0);
+            const monthlySales = (appState.sales || []).filter(s => s.date >= resetDateStr && s.status === 'completed');
+            const totalRevenue = monthlySales.reduce((acc, s) => acc + (s.total || 0), 0);
             
             const totalVariableCosts = monthlySales.reduce((acc, s) => {
-                const materialsCost = s.items.reduce((itemAcc, item) => {
-                    const product = appState.inventory.find(p => p.id === item.productId);
-                    return itemAcc + (product ? (product.costPrice * item.qty) : 0);
+                const materialsCost = (s.items || []).reduce((itemAcc, item) => {
+                    const product = (appState.inventory || []).find(p => p.id === item.productId);
+                    return itemAcc + (product ? ((product.costPrice || 0) * (item.qty || 0)) : 0);
                 }, 0);
                 return acc + materialsCost + (s.deliveryHelperCostTotal || 0) + (s.fee || 0);
             }, 0);
@@ -7806,15 +7849,15 @@
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    ${appState.goals.map(goal => {
-                        const progress = (goal.current / goal.target) * 100;
+                    ${(appState.goals || []).map(goal => {
+                        const progress = (goal.target > 0) ? (goal.current / goal.target) * 100 : 0;
                         const isGlobal = !goal.employeeId;
                         return `
                             <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
                                 <div class="flex justify-between items-start mb-4">
                                     <div>
-                                        <h4 class="font-bold text-lg dark:text-white">${goal.title}</h4>
-                                        <p class="text-xs text-slate-500">${goal.period} • ${isGlobal ? 'Meta Global' : 'Meta Individual'}</p>
+                                        <h4 class="font-bold text-lg dark:text-white">${goal.title || 'Sem título'}</h4>
+                                        <p class="text-xs text-slate-500">${goal.period || ''} • ${isGlobal ? 'Meta Global' : 'Meta Individual'}</p>
                                     </div>
                                     <span class="px-2 py-1 bg-primary-50 dark:bg-primary-900/20 text-primary-600 text-[10px] font-bold rounded-full uppercase">
                                         ${progress >= 100 ? 'Alcançada' : 'Em andamento'}
@@ -7822,7 +7865,7 @@
                                 </div>
                                 <div class="space-y-2">
                                     <div class="flex justify-between text-sm">
-                                        <span class="font-medium">${formatCurrency(goal.current)} de ${formatCurrency(goal.target)}</span>
+                                        <span class="font-medium">${formatCurrency(goal.current || 0)} de ${formatCurrency(goal.target || 0)}</span>
                                         <span class="font-bold text-primary-600">${progress.toFixed(1)}%</span>
                                     </div>
                                     <div class="h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
@@ -7830,7 +7873,7 @@
                                     </div>
                                 </div>
                                 <div class="mt-6 flex justify-end gap-2">
-                                    <button onclick="deleteGoal(${goal.id})" class="text-xs text-slate-400 hover:text-danger font-bold">Excluir Meta</button>
+                                    <button onclick="deleteGoal('${goal.id}')" class="text-xs text-slate-400 hover:text-danger font-bold">Excluir Meta</button>
                                 </div>
                             </div>
                         `;
