@@ -1599,7 +1599,7 @@
 
         function renderDashboardSubTab() {
             // LÓGICA DE DATA DE RESET (Ponto de Equilíbrio)
-            const { resetDateStr, daysElapsed } = getBreakEvenConfig();
+            const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
 
             // Recalcular variáveis necessárias para as sub-abas
             const salariesCosts = appState.employees.reduce((acc, emp) => acc + (emp.salary || 0), 0);
@@ -1662,6 +1662,7 @@
                                 </h4>
                                 <div class="flex items-center gap-2">
                                     <span class="text-[9px] font-black uppercase text-slate-400 bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded-lg">Ciclo: ${formatDate(resetDateStr)}</span>
+                                    <span class="text-[9px] font-black uppercase text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-2 py-1 rounded-lg">Reset: ${formatDate(endDateStr)}</span>
                                     <button onclick="resetBreakEven()" class="p-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-red-500 hover:text-white rounded-lg transition-all" title="Zerar Ciclo">
                                         <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
                                     </button>
@@ -7727,12 +7728,13 @@
                     </div>
                     
                     <div class="p-6">
-                        <div class="mb-4 flex items-center gap-3">
+                        <div class="mb-4 flex flex-wrap items-center gap-3">
                             <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ciclo atual</span>
                             <span class="text-xs font-black text-primary-600">Dia ${daysElapsed} / 30</span>
                             <div class="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden w-32">
                                 <div class="bg-primary-500 h-full" style="width: ${Math.min(100, (daysElapsed / 30) * 100)}%"></div>
                             </div>
+                            <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-auto">Reset em: <span class="text-slate-900 dark:text-white">${formatDate(endDateStr)}</span></span>
                         </div>
                         <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
                             <!-- Circular Progress -->
