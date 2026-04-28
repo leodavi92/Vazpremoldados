@@ -427,7 +427,8 @@
                 { id: 1, name: 'Betoneira 400L', lastMaintenance: '2026-01-10', maintenanceInterval: 90, status: 'ok' },
                 { id: 2, name: 'Vibrador de Imersão', lastMaintenance: '2026-03-01', maintenanceInterval: 30, status: 'ok' }
             ],
-            accounts: ['Caixa Principal', 'Conta Bancária', 'Reserva Emergência']
+            accounts: ['Caixa Principal', 'Conta Bancária', 'Reserva Emergência'],
+            stockMovements: []
         };
 
         function createEmptyState() {
@@ -465,7 +466,8 @@
                 production: [],
                 fixedAccounts: [],
                 equipment: [],
-                accounts: ['Caixa Principal']
+                accounts: ['Caixa Principal'],
+                stockMovements: []
             };
         }
 
@@ -503,6 +505,7 @@
         if (!Array.isArray(appState.fixedAccounts)) appState.fixedAccounts = [];
         if (!Array.isArray(appState.equipment)) appState.equipment = [];
         if (!Array.isArray(appState.accounts)) appState.accounts = ['Caixa Principal'];
+        if (!Array.isArray(appState.stockMovements)) appState.stockMovements = [];
         
         // MIGRATION: Force update categories to ensure user sees the new factory categories
         appState.config.categories = INITIAL_STATE.config.categories;
@@ -976,6 +979,22 @@
         };
 
         function renderProducao() {
+            // Cálculo de Produção Mensal (Resumo por Produto)
+            const now = new Date();
+            const currentMonth = now.toISOString().substring(0, 7); // YYYY-MM
+            const monthName = now.toLocaleString('pt-BR', { month: 'long' });
+            
+            const monthlyProductionMap = new Map();
+            appState.production.filter(p => p.date.startsWith(currentMonth)).forEach(p => {
+                const name = p.productName || 'Produto';
+                monthlyProductionMap.set(name, (monthlyProductionMap.get(name) || 0) + p.qty);
+            });
+            const monthlyProduction = Array.from(monthlyProductionMap.entries())
+                .map(([name, qty]) => ({ name, qty }))
+                .sort((a, b) => b.qty - a.qty);
+            
+            const totalMonthly = monthlyProduction.reduce((acc, p) => acc + p.qty, 0);
+
             // Cálculo de Necessidade de Produção (PCP)
             const pcpNeeds = {};
             appState.sales.filter(s => s.status === 'pending').forEach(sale => {
@@ -1011,35 +1030,35 @@
             });
 
             let html = `
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                     <div>
-                        <h2 class="text-2xl font-bold dark:text-white">Produção Diária</h2>
-                        <p class="text-slate-500 dark:text-slate-400">Registre a fabricação e dê baixa automática em matérias-primas</p>
+                        <h2 class="text-2xl font-bold dark:text-white">Produção</h2>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Gestão de Fabricação Diária</p>
                     </div>
-                    <button onclick="openProductionModal()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-semibold transition-all shadow-lg shadow-primary-500/20">
-                        <i data-lucide="plus" class="w-4 h-4"></i> Registrar Produção
+                    <button onclick="openProductionModal()" class="w-full sm:w-auto bg-primary-600 hover:bg-primary-700 text-white px-6 py-4 sm:py-2.5 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-primary-500/20 uppercase text-xs tracking-widest">
+                        <i data-lucide="plus" class="w-5 h-5"></i> Registrar Produção
                     </button>
                 </div>
 
                 <!-- Painel PCP (Planejamento e Controle de Produção) -->
                 ${pcpAlerts.length > 0 ? `
-                    <div class="mb-8 p-6 bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-800 rounded-2xl animate-fade-in shadow-sm">
-                        <h4 class="font-bold text-orange-800 dark:text-orange-300 flex items-center gap-2 mb-4">
-                            <i data-lucide="factory" class="w-5 h-5"></i>
-                            Planejamento: Necessidade de Produção para Pedidos Pendentes
+                    <div class="mb-6 p-4 sm:p-6 bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-800 rounded-3xl animate-fade-in shadow-sm">
+                        <h4 class="font-black text-[10px] text-orange-800 dark:text-orange-300 flex items-center gap-2 mb-4 uppercase tracking-widest">
+                            <i data-lucide="factory" class="w-4 h-4"></i>
+                            Necessidade para Pedidos Pendentes
                         </h4>
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                             ${pcpAlerts.map(alert => `
-                                <div class="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-orange-100 dark:border-orange-800/50 flex flex-col">
+                                <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-orange-100 dark:border-orange-800/50 flex flex-col">
                                     <div class="flex justify-between items-start mb-2">
-                                        <span class="text-sm font-bold text-slate-900 dark:text-white">${alert.name}</span>
-                                        <span class="px-2 py-0.5 bg-orange-100 text-orange-700 text-[9px] font-black rounded-full">FALTA PRODUZIR</span>
+                                        <span class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter">${alert.name}</span>
+                                        <span class="px-2 py-0.5 bg-orange-100 text-orange-700 text-[8px] font-black rounded-full uppercase">Falta</span>
                                     </div>
-                                    <div class="flex justify-between text-[11px] mb-3">
-                                        <span class="text-slate-500 uppercase font-semibold">Pedidos: <b>${alert.needed}</b></span>
-                                        <span class="text-slate-500 uppercase font-semibold">Estoque: <b>${alert.stock}</b></span>
+                                    <div class="flex justify-between text-[10px] mb-4">
+                                        <span class="text-slate-500 uppercase font-bold">Pedidos: <b class="text-slate-900 dark:text-white">${alert.needed}</b></span>
+                                        <span class="text-slate-500 uppercase font-bold">Estoque: <b class="text-slate-900 dark:text-white">${alert.stock}</b></span>
                                     </div>
-                                    <button onclick="openProductionModal(${alert.id}, ${alert.toProduce})" class="w-full py-2 bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-black rounded-lg transition-all flex items-center justify-center gap-2 uppercase tracking-wider">
+                                    <button onclick="openProductionModal(${alert.id}, ${alert.toProduce})" class="w-full py-3 bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-black rounded-xl transition-all flex items-center justify-center gap-2 uppercase tracking-widest active:scale-95">
                                         PRODUZIR ${alert.toProduce} AGORA
                                     </button>
                                 </div>
@@ -1047,37 +1066,74 @@
                         </div>
                     </div>
                 ` : `
-                    <div class="mb-8 p-4 bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800 rounded-2xl flex items-center gap-3 shadow-sm animate-fade-in">
+                    <div class="mb-6 p-4 bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800 rounded-3xl flex items-center gap-3 shadow-sm animate-fade-in">
                         <div class="bg-green-100 dark:bg-green-900/40 p-2 rounded-full text-green-600">
                             <i data-lucide="check-circle" class="w-5 h-5"></i>
                         </div>
-                        <p class="text-sm font-semibold text-green-800 dark:text-green-300 italic">Estoque em dia! Todos os pedidos pendentes já têm produtos garantidos no estoque.</p>
+                        <p class="text-[10px] font-black uppercase tracking-widest text-green-800 dark:text-green-300">Estoque em dia para todos os pedidos!</p>
                     </div>
                 `}
 
-                <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
-                    <div class="p-4 border-b border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row gap-4 items-center justify-between">
-                        <h4 class="font-bold">Histórico de Produção</h4>
+                <!-- Painel de Resumo Mensal de Produção -->
+                <div class="mb-6 bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
+                    <div class="p-4 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-700/30 flex justify-between items-center">
+                        <h4 class="font-black text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                            <i data-lucide="bar-chart-2" class="w-4 h-4"></i>
+                            Fabricado em ${monthName}
+                        </h4>
+                        <span class="text-[10px] font-black text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-3 py-1 rounded-full uppercase tracking-tighter">Total: ${totalMonthly} un</span>
+                    </div>
+                    <div class="p-4 sm:p-6">
+                        ${monthlyProduction.length > 0 ? `
+                            <div class="space-y-4">
+                                ${monthlyProduction.map((p, index) => {
+                                    const percentage = totalMonthly > 0 ? (p.qty / totalMonthly * 100).toFixed(0) : 0;
+                                    const colors = [
+                                        'bg-primary-500', 'bg-emerald-500', 'bg-amber-500', 
+                                        'bg-rose-500', 'bg-violet-500', 'bg-cyan-500'
+                                    ];
+                                    const color = colors[index % colors.length];
+                                    
+                                    return `
+                                        <div class="relative">
+                                            <div class="flex justify-between items-center mb-1.5">
+                                                <div class="flex items-center gap-3">
+                                                    <div class="w-6 h-6 rounded-lg ${index === 0 ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 dark:bg-slate-700 text-slate-500'} flex items-center justify-center text-[10px] font-black">
+                                                        ${index + 1}º
+                                                    </div>
+                                                    <span class="text-xs font-black text-slate-700 dark:text-slate-200 uppercase tracking-tighter">${p.name}</span>
+                                                </div>
+                                                <div class="text-right">
+                                                    <span class="text-xs font-black text-slate-900 dark:text-white">${p.qty} <span class="text-[9px] text-slate-400 uppercase">un</span></span>
+                                                    <span class="text-[9px] font-bold text-slate-400 ml-2">${percentage}%</span>
+                                                </div>
+                                            </div>
+                                            <div class="w-full h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                <div class="h-full ${color} rounded-full transition-all duration-500" style="width: ${percentage}%"></div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        ` : `
+                            <div class="text-center py-4">
+                                <p class="text-[10px] text-slate-400 font-black uppercase tracking-widest italic">Nenhuma produção registrada ainda.</p>
+                            </div>
+                        `}
+                    </div>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="flex flex-col sm:flex-row gap-4 items-center justify-between">
+                        <h4 class="font-black text-xs uppercase tracking-widest text-slate-400">Histórico de Produção</h4>
                         <div class="flex gap-2 w-full sm:w-auto">
-                            <input type="date" id="prod-filter-start" onchange="filterProduction()" class="bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm p-2 outline-none">
-                            <input type="date" id="prod-filter-end" onchange="filterProduction()" class="bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm p-2 outline-none">
+                            <input type="date" id="prod-filter-start" onchange="filterProduction()" class="flex-1 sm:w-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold p-3 outline-none focus:ring-2 focus:ring-primary-500 shadow-sm">
+                            <input type="date" id="prod-filter-end" onchange="filterProduction()" class="flex-1 sm:w-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold p-3 outline-none focus:ring-2 focus:ring-primary-500 shadow-sm">
                         </div>
                     </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-sm text-left">
-                            <thead class="bg-slate-50 dark:bg-slate-700/50 text-slate-500">
-                                <tr>
-                                    <th class="px-6 py-4">Data</th>
-                                    <th class="px-6 py-4">Produto Fabricado</th>
-                                    <th class="px-6 py-4">Quantidade</th>
-                                    <th class="px-6 py-4">Consumo de Insumos</th>
-                                    <th class="px-6 py-4 text-right">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody id="production-table-body" class="divide-y divide-slate-100 dark:divide-slate-700">
-                                <!-- Preenchido via filterProduction -->
-                            </tbody>
-                        </table>
+                    
+                    <div id="production-history-list" class="space-y-3">
+                        <!-- Preenchido via filterProduction -->
                     </div>
                 </div>
             `;
@@ -1098,28 +1154,50 @@
                 return matchesDate;
             });
 
-            document.getElementById('production-table-body').innerHTML = filtered.slice(-20).reverse().map(p => `
-                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                    <td class="px-6 py-4">${formatDate(p.date)}</td>
-                    <td class="px-6 py-4 font-bold text-slate-900 dark:text-white">${p.productName}</td>
-                    <td class="px-6 py-4 font-semibold text-primary-600">${p.qty} un</td>
-                    <td class="px-6 py-4">
-                        <div class="flex flex-wrap gap-1">
-                            ${p.materials.map(m => `
-                                <span class="text-[10px] px-2 py-0.5 bg-slate-100 dark:bg-slate-700 rounded-full border border-slate-200 dark:border-slate-600">
-                                    ${m.name}: ${m.qty.toFixed(2)}
-                                </span>
-                            `).join('')}
+            const container = document.getElementById('production-history-list');
+            if (!container) return;
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="py-12 text-center bg-white dark:bg-slate-800 rounded-3xl border border-dashed border-slate-200 dark:border-slate-700">
+                        <i data-lucide="history" class="w-12 h-12 text-slate-200 mx-auto mb-3"></i>
+                        <p class="text-sm text-slate-400 font-bold uppercase tracking-widest">Nenhum registro encontrado</p>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = filtered.slice(-30).reverse().map(p => `
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm animate-fade-in">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">${formatDate(p.date)}</p>
+                                <h5 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter">${p.productName}</h5>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-lg font-black text-primary-600 tracking-tighter">${p.qty} <span class="text-[10px] uppercase">un</span></p>
+                                <button onclick="deleteProduction(${p.id})" class="mt-1 p-2 text-slate-300 hover:text-danger transition-colors">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
                         </div>
-                    </td>
-                    <td class="px-6 py-4 text-right">
-                        <button onclick="deleteProduction(${p.id})" class="p-2 text-slate-400 hover:text-danger">
-                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                        </button>
-                    </td>
-                </tr>
-            `).join('');
-            lucide.createIcons();
+                        
+                        <div class="pt-3 border-t border-slate-50 dark:border-slate-700/50">
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Materiais Consumidos:</p>
+                            <div class="flex flex-wrap gap-1.5">
+                                ${p.materials.map(m => `
+                                    <span class="text-[9px] font-bold px-2.5 py-1 bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 rounded-full border border-slate-100 dark:border-slate-600">
+                                        ${m.name}: <b class="text-slate-900 dark:text-white">${m.qty.toFixed(2)}</b>
+                                    </span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+            
+            try {
+                lucide.createIcons();
+            } catch (_) {
+            }
         }
 
         function openProductionModal(preSelectedId = null, preSelectedQty = null) {
@@ -1128,38 +1206,41 @@
             let html = `
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
-                        <h3 class="text-xl font-bold dark:text-white">Registrar Produção</h3>
-                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                        <h3 class="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tighter">Registrar Produção</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
                     </div>
-                    <form id="production-form" class="space-y-4">
+                    <form id="production-form" class="space-y-5">
                         <div>
-                            <label class="block text-sm font-medium mb-1">Produto a Fabricar</label>
-                            <select id="prod-product" required class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500">
+                            <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Produto a Fabricar</label>
+                            <select id="prod-product" required class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm appearance-none">
                                 <option value="">Selecione o pré-moldado...</option>
                                 ${finalProducts.map(p => `<option value="${p.id}" ${preSelectedId == p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
                             </select>
                         </div>
-                        <div class="grid grid-cols-2 gap-4">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-sm font-medium mb-1">Quantidade Fabricada</label>
-                                <input type="number" id="prod-qty" required min="1" value="${preSelectedQty || ''}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Quantidade Fabricada</label>
+                                <input type="number" id="prod-qty" required min="1" value="${preSelectedQty || ''}" placeholder="0" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-sm">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-1">Data da Produção</label>
-                                <input type="date" id="prod-date" required value="${new Date().toISOString().split('T')[0]}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Data da Produção</label>
+                                <input type="date" id="prod-date" required value="${new Date().toISOString().split('T')[0]}" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm">
                             </div>
                         </div>
                         
-                        <div id="recipe-preview" class="p-4 bg-primary-50 dark:bg-primary-900/20 rounded-xl border border-primary-100 dark:border-primary-800 hidden">
-                            <h5 class="text-xs font-bold text-primary-700 dark:text-primary-300 uppercase mb-2">Consumo Estimado de Matéria-Prima:</h5>
-                            <ul id="recipe-list" class="space-y-1 text-sm"></ul>
+                        <div id="recipe-preview" class="p-5 bg-primary-50 dark:bg-primary-900/10 rounded-3xl border border-primary-100 dark:border-primary-900/30 hidden">
+                            <h5 class="text-[10px] font-black text-primary-700 dark:text-primary-300 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <i data-lucide="info" class="w-4 h-4"></i>
+                                Consumo de Matéria-Prima:
+                            </h5>
+                            <ul id="recipe-list" class="space-y-2"></ul>
                         </div>
 
-                        <div class="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-700">
-                            <button type="button" onclick="closeModal()" class="px-6 py-2 rounded-xl border border-slate-200 dark:border-slate-700 font-semibold hover:bg-slate-50 dark:hover:bg-slate-700">Cancelar</button>
-                            <button type="submit" class="px-6 py-2 rounded-xl bg-success text-white font-bold hover:brightness-95 shadow-lg transition-all active:scale-95">Confirmar Produção</button>
+                        <div class="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                            <button type="button" onclick="closeModal()" class="w-full sm:w-auto px-6 py-4 sm:py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">Cancelar</button>
+                            <button type="submit" class="w-full sm:w-auto px-6 py-4 sm:py-2.5 rounded-2xl bg-success text-white font-black text-xs uppercase tracking-widest hover:brightness-95 shadow-lg shadow-success/20 transition-all active:scale-95">Confirmar Produção</button>
                         </div>
                     </form>
                 </div>
@@ -1183,9 +1264,12 @@
                         const totalNeeded = item.qty * qty;
                         const isShort = material.stock < totalNeeded;
                         return `
-                            <li class="flex justify-between items-center ${isShort ? 'text-danger font-bold' : 'text-slate-600 dark:text-slate-400'}">
-                                <span>${material.name}</span>
-                                <span>${totalNeeded.toFixed(2)} ${material.unit} ${isShort ? '(Estoque Insuficiente!)' : ''}</span>
+                            <li class="flex justify-between items-center ${isShort ? 'text-danger' : 'text-slate-600 dark:text-slate-400'}">
+                                <span class="text-xs font-bold uppercase tracking-tight">${material.name}</span>
+                                <span class="text-xs font-black ${isShort ? 'text-danger' : 'text-slate-900 dark:text-white'}">
+                                    ${totalNeeded.toFixed(2)} ${material.unit}
+                                    ${isShort ? '<br><span class="text-[8px] uppercase tracking-tighter">Estoque Insuficiente!</span>' : ''}
+                                </span>
                             </li>
                         `;
                     }).join('');
@@ -1208,6 +1292,11 @@
                 const qty = parseInt(qtyInput.value);
                 const date = document.getElementById('prod-date').value;
                 const product = appState.inventory.find(p => p.id === pId);
+
+                if (!product) {
+                    showToast('Selecione um produto.', 'error');
+                    return;
+                }
 
                 // Check stock for all materials first
                 let stockOk = true;
@@ -1247,6 +1336,10 @@
                 renderProducao();
                 showToast('Produção registrada com sucesso!');
             };
+            
+            try {
+                lucide.createIcons();
+            } catch (_) {}
         }
 
         function deleteProduction(id) {
@@ -1540,8 +1633,8 @@
                         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                             <div class="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm">
                                 <h4 class="text-sm font-bold mb-4 flex items-center gap-2">
-                                    <i data-lucide="pie-chart" class="w-4 h-4 text-primary-500"></i>
-                                    Origem das Receitas
+                                    <i data-lucide="shopping-bag" class="w-4 h-4 text-primary-500"></i>
+                                    Vendas por Produto
                                 </h4>
                                 <div class="h-[220px] flex items-center justify-center">
                                     <canvas id="chart-pie"></canvas>
@@ -1833,28 +1926,32 @@
             if (dashboardSubTab === 'financeiro' && chartPieEl) {
                 const ctxPie = chartPieEl.getContext('2d');
                 
-                // Origem das Receitas por Categoria
+                // Vendas por Produto (Quantidade acumulada)
                 const currentMonth = new Date().toISOString().substring(0, 7);
-                const incomeByCategory = {};
+                const salesByProduct = {};
                 
-                appState.transactions
-                    .filter(t => t.type === 'entrada' && t.date.startsWith(currentMonth))
-                    .forEach(t => {
-                        incomeByCategory[t.category] = (incomeByCategory[t.category] || 0) + t.amount;
+                appState.sales
+                    .filter(s => s.date.startsWith(currentMonth))
+                    .forEach(s => {
+                        if (s.items && Array.isArray(s.items)) {
+                            s.items.forEach(item => {
+                                salesByProduct[item.name] = (salesByProduct[item.name] || 0) + item.qty;
+                            });
+                        }
                     });
                 
-                const pieLabels = Object.keys(incomeByCategory);
-                const pieData = Object.values(incomeByCategory);
+                const pieLabels = Object.keys(salesByProduct);
+                const pieData = Object.values(salesByProduct);
                 
                 if (dashboardCharts.pie) dashboardCharts.pie.destroy();
 
                 dashboardCharts.pie = new Chart(ctxPie, {
                     type: 'doughnut',
                     data: {
-                        labels: pieLabels.length > 0 ? pieLabels : ['Nenhuma'],
+                        labels: pieLabels.length > 0 ? pieLabels : ['Nenhuma venda'],
                         datasets: [{
                             data: pieData.length > 0 ? pieData : [1],
-                            backgroundColor: ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'],
+                            backgroundColor: ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316'],
                             borderWidth: 2,
                             borderColor: document.documentElement.classList.contains('dark') ? '#1e293b' : '#fff',
                             hoverOffset: 15
@@ -1863,16 +1960,38 @@
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        cutout: '75%',
+                        cutout: '70%',
                         plugins: { 
                             legend: { 
                                 position: 'bottom',
                                 labels: { 
-                                    padding: 20,
+                                    padding: 15,
                                     usePointStyle: true,
-                                    font: { size: 10, weight: '600' }
+                                    font: { size: 10, weight: '700' },
+                                    generateLabels: (chart) => {
+                                        const data = chart.data;
+                                        if (data.labels.length && data.datasets.length) {
+                                            return data.labels.map((label, i) => {
+                                                const value = data.datasets[0].data[i];
+                                                return {
+                                                    text: `${value}x ${label}`,
+                                                    fillStyle: data.datasets[0].backgroundColor[i],
+                                                    strokeStyle: data.datasets[0].borderColor,
+                                                    lineWidth: data.datasets[0].borderWidth,
+                                                    hidden: false,
+                                                    index: i
+                                                };
+                                            });
+                                        }
+                                        return [];
+                                    }
                                 } 
-                            } 
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: (context) => `Quantidade: ${context.raw}`
+                                }
+                            }
                         }
                     }
                 });
@@ -1882,95 +2001,96 @@
         // --- INVENTORY RENDER ---
         function renderEstoque() {
             let html = `
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                     <div>
-                        <h2 class="text-2xl font-bold dark:text-white">Gestão de Estoque</h2>
-                        <p class="text-slate-500 dark:text-slate-400">Controle total de produtos e movimentações</p>
+                        <h2 class="text-2xl font-bold dark:text-white">Estoque</h2>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Controle de Produtos e Insumos</p>
                     </div>
-                    <div class="flex gap-2">
-                        <button onclick="openProductModal()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-semibold transition-all">
-                            <i data-lucide="plus" class="w-4 h-4"></i> Novo Produto
+                    <div class="grid grid-cols-2 sm:flex gap-2 w-full sm:w-auto">
+                        <button onclick="openProductModal()" class="flex-1 bg-primary-600 hover:bg-primary-700 text-white px-4 py-3 sm:py-2 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-primary-500/20 uppercase text-[10px] tracking-widest">
+                            <i data-lucide="plus" class="w-4 h-4"></i> Novo Item
                         </button>
-                        <button onclick="openStockMovementModal()" class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-4 py-2 rounded-xl flex items-center gap-2 font-semibold transition-all">
-                            <i data-lucide="refresh-cw" class="w-4 h-4"></i> Movimentação
+                        <button onclick="openStockMovementModal()" class="flex-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-4 py-3 sm:py-2 rounded-2xl flex items-center justify-center gap-2 font-black transition-all uppercase text-[10px] tracking-widest">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i> Ajustar
                         </button>
                     </div>
                 </div>
 
-                <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
-                    <div class="p-4 border-b border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row gap-4 items-center justify-between">
+                <div class="space-y-4">
+                    <div class="flex flex-col sm:flex-row gap-3 items-center justify-between">
                         <div class="relative w-full sm:w-72">
-                            <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
-                            <input type="text" id="inventory-search" onkeyup="filterInventory()" placeholder="Buscar produto..." 
-                                class="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm outline-none">
+                            <i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                            <input type="text" id="inventory-search" onkeyup="filterInventory()" placeholder="Buscar produto ou código..." 
+                                class="w-full pl-11 pr-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-primary-500 shadow-sm">
                         </div>
                         <div class="flex gap-2 w-full sm:w-auto">
-                            <select id="inventory-filter-cat" onchange="filterInventory()" class="bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm p-2 outline-none">
+                            <select id="inventory-filter-cat" onchange="filterInventory()" class="flex-1 sm:w-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl text-xs font-black uppercase tracking-widest p-3 outline-none focus:ring-2 focus:ring-primary-500 shadow-sm appearance-none">
                                 <option value="">Todas Categorias</option>
                                 ${appState.config.categories.map(c => `<option value="${c}" ${c === 'Produtos Acabados' ? 'selected' : ''}>${c}</option>`).join('')}
                             </select>
                         </div>
                     </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-sm text-left">
-                            <thead class="bg-slate-50 dark:bg-slate-700/50 text-slate-500">
-                                <tr>
-                                    <th class="px-6 py-4">Produto</th>
-                                    <th class="px-6 py-4">Código</th>
-                                    <th class="px-6 py-4">Categoria</th>
-                                    <th class="px-6 py-4">Preço Venda</th>
-                                    <th class="px-6 py-4">Estoque</th>
-                                    <th class="px-6 py-4 text-right">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody id="inventory-table-body" class="divide-y divide-slate-100 dark:divide-slate-700">
-                                <!-- Filtragem inicial será feita via script logo abaixo -->
-                            </tbody>
-                        </table>
+
+                    <div id="inventory-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                        <!-- Preenchido via filterInventory -->
                     </div>
                 </div>
             `;
             document.getElementById('content-area').innerHTML = html;
-            lucide.createIcons();
-            filterInventory(); // Executa o filtro inicial baseado no 'selected' acima
+            try {
+                lucide.createIcons();
+            } catch (_) {}
+            filterInventory();
         }
 
-        function renderInventoryRow(p) {
+        function renderInventoryCard(p) {
             const isLow = p.stock <= p.minStock;
             return `
-                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                    <td class="px-6 py-4">
-                        <div class="font-bold text-slate-900 dark:text-white">${p.name}</div>
-                        <div class="text-xs text-slate-500 truncate max-w-xs">${p.description}</div>
-                    </td>
-                    <td class="px-6 py-4 text-slate-500">${p.code}</td>
-                    <td class="px-6 py-4">
-                        <span class="px-2 py-1 bg-primary-50 dark:bg-primary-900/20 text-primary-600 text-xs rounded-full">${p.category}</span>
-                    </td>
-                    <td class="px-6 py-4 font-semibold">${formatCurrency(p.sellPrice)}</td>
-                    <td class="px-6 py-4">
-                        <div class="flex items-center gap-2">
-                            <span class="font-bold ${isLow ? 'text-danger' : 'text-slate-900 dark:text-white'}">${p.stock} ${p.unit}</span>
-                            ${isLow ? '<i data-lucide="alert-triangle" class="w-4 h-4 text-danger"></i>' : ''}
+                <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm animate-fade-in flex flex-col justify-between">
+                    <div>
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="px-2.5 py-1 bg-primary-50 dark:bg-primary-900/20 text-primary-600 text-[8px] font-black rounded-full uppercase tracking-widest border border-primary-100 dark:border-primary-800/50">
+                                ${p.category}
+                            </span>
+                            <span class="text-[9px] font-black text-slate-300 uppercase tracking-tighter">${p.code || 'S/ COD'}</span>
                         </div>
-                    </td>
-                    <td class="px-6 py-4 text-right">
-                        <div class="flex justify-end gap-2">
-                            <button onclick="editProduct(${p.id})" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-slate-500 hover:text-primary-600 transition-colors">
-                                <i data-lucide="edit-2" class="w-4 h-4"></i>
+                        <h4 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter mb-1">${p.name}</h4>
+                        <p class="text-[10px] text-slate-400 font-medium line-clamp-2 mb-4 h-8">${p.description || 'Nenhuma descrição informada.'}</p>
+                    </div>
+
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-end">
+                            <div>
+                                <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Preço Venda</p>
+                                <p class="text-sm font-black text-slate-900 dark:text-white">${formatCurrency(p.sellPrice)}</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Disponível</p>
+                                <div class="flex items-center justify-end gap-1.5">
+                                    <span class="text-lg font-black tracking-tighter ${isLow ? 'text-danger' : 'text-primary-600'}">
+                                        ${p.stock} <span class="text-[10px] uppercase font-bold text-slate-400">${p.unit}</span>
+                                    </span>
+                                    ${isLow ? '<i data-lucide="alert-triangle" class="w-4 h-4 text-danger animate-pulse"></i>' : ''}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-2 pt-3 border-t border-slate-50 dark:border-slate-700/50">
+                            <button onclick="editProduct(${p.id})" class="flex-1 py-2.5 bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-primary-50 hover:text-primary-600 transition-all active:scale-95 flex items-center justify-center gap-2">
+                                <i data-lucide="edit-2" class="w-3.5 h-3.5"></i> Editar
                             </button>
-                            <button onclick="deleteProduct(${p.id})" class="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-slate-500 hover:text-danger transition-colors">
+                            <button onclick="deleteProduct(${p.id})" class="p-2.5 bg-slate-50 dark:bg-slate-700/50 text-slate-300 hover:text-danger rounded-xl transition-all active:scale-95 flex items-center justify-center">
                                 <i data-lucide="trash-2" class="w-4 h-4"></i>
                             </button>
                         </div>
-                    </td>
-                </tr>
+                    </div>
+                </div>
             `;
         }
 
         function filterInventory() {
-            const search = document.getElementById('inventory-search').value.toLowerCase();
-            const cat = document.getElementById('inventory-filter-cat').value;
+            const search = document.getElementById('inventory-search')?.value.toLowerCase() || '';
+            const cat = document.getElementById('inventory-filter-cat')?.value || '';
             
             const filtered = appState.inventory.filter(p => {
                 const matchesSearch = p.name.toLowerCase().includes(search) || p.code.toLowerCase().includes(search);
@@ -1978,111 +2098,128 @@
                 return matchesSearch && matchesCat;
             });
 
-            document.getElementById('inventory-table-body').innerHTML = filtered.map(p => renderInventoryRow(p)).join('');
-            lucide.createIcons();
+            const container = document.getElementById('inventory-list');
+            if (!container) return;
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full py-12 text-center bg-white dark:bg-slate-800 rounded-3xl border border-dashed border-slate-200 dark:border-slate-700">
+                        <i data-lucide="package-search" class="w-12 h-12 text-slate-200 mx-auto mb-3"></i>
+                        <p class="text-sm text-slate-400 font-bold uppercase tracking-widest">Nenhum produto encontrado</p>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = filtered.map(p => renderInventoryCard(p)).join('');
+            }
+            
+            try {
+                lucide.createIcons();
+            } catch (_) {}
         }
 
         // --- PRODUCT MODAL ---
         function openProductModal(productId = null) {
             const product = productId ? appState.inventory.find(p => p.id === productId) : null;
-            const title = product ? 'Editar Produto' : 'Novo Produto';
+            const title = product ? 'Editar Item' : 'Novo Item';
             const rawMaterials = appState.inventory.filter(p => p.type === 'raw');
             
             let html = `
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
-                        <h3 class="text-xl font-bold dark:text-white">${title}</h3>
-                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                        <h3 class="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tighter">${title}</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
                     </div>
-                    <form id="product-form" class="space-y-4">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div class="md:col-span-2">
-                                <label class="block text-sm font-medium mb-1">Tipo de Item</label>
-                                <select id="p-type" onchange="toggleRecipeField()" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                    <form id="product-form" class="space-y-5">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="sm:col-span-2">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Tipo de Item</label>
+                                <select id="p-type" onchange="toggleRecipeField()" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm appearance-none">
                                     <option value="raw" ${product?.type === 'raw' ? 'selected' : ''}>Matéria-Prima / Insumo</option>
                                     <option value="final" ${product?.type === 'final' ? 'selected' : ''}>Produto Acabado (Pré-moldado)</option>
                                 </select>
                             </div>
-                            <div class="md:col-span-2">
-                                <label class="block text-sm font-medium mb-1">Nome do Produto *</label>
-                                <input type="text" id="p-name" required value="${product?.name || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                            <div class="sm:col-span-2">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Nome do Item *</label>
+                                <input type="text" id="p-name" required value="${product?.name || ''}" placeholder="Ex: Cimento CP-II" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-sm">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-1">Código / SKU</label>
-                                <input type="text" id="p-code" value="${product?.code || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Código / SKU</label>
+                                <input type="text" id="p-code" value="${product?.code || ''}" placeholder="PROD-000" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-1">Categoria</label>
-                                <select id="p-cat" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Categoria</label>
+                                <select id="p-cat" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm appearance-none">
                                     ${appState.config.categories.map(c => `<option value="${c}" ${product?.category === c ? 'selected' : ''}>${c}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-1">Preço de Custo (R$)</label>
-                                <input type="number" step="0.01" id="p-cost" required value="${product?.costPrice || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Preço de Custo (R$)</label>
+                                <input type="number" step="0.01" id="p-cost" required value="${product?.costPrice || ''}" placeholder="0,00" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-sm">
                             </div>
-                            <div id="p-sell-container" class="md:col-span-1 ${product?.type === 'raw' ? 'hidden' : ''}">
-                                <label class="block text-sm font-medium mb-1">Preço de Venda (R$)</label>
-                                <input type="number" step="0.01" id="p-sell" required value="${product?.sellPrice || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                            <div id="p-sell-container" class="${product?.type === 'raw' ? 'hidden' : ''}">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Preço de Venda (R$)</label>
+                                <input type="number" step="0.01" id="p-sell" required value="${product?.sellPrice || ''}" placeholder="0,00" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-sm">
                             </div>
-                            <div id="p-helper-container" class="md:col-span-1 ${product?.type === 'raw' ? 'hidden' : ''}">
-                                <label class="block text-sm font-medium mb-1">Custo Ajudante Entrega (por unidade) (R$)</label>
-                                <input type="number" step="0.01" id="p-helper" value="${product?.helperFee ?? 0}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                            <div id="p-helper-container" class="${product?.type === 'raw' ? 'hidden' : ''}">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Taxa Ajudante (un) (R$)</label>
+                                <input type="number" step="0.01" id="p-helper" value="${product?.helperFee ?? 0}" placeholder="0,00" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-sm">
+                            </div>
+                            <div class="grid grid-cols-2 gap-3 sm:col-span-2">
+                                <div>
+                                    <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Estoque Inicial</label>
+                                    <input type="number" step="0.001" id="p-stock" required value="${product?.stock || 0}" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-sm">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Aviso de Mínimo</label>
+                                    <input type="number" step="0.001" id="p-min" required value="${product?.minStock || 0}" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-sm">
+                                </div>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-1">Estoque Atual</label>
-                                <input type="number" step="0.001" id="p-stock" required value="${product?.stock || 0}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium mb-1">Estoque Mínimo</label>
-                                <input type="number" step="0.001" id="p-min" required value="${product?.minStock || 0}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium mb-1">Unidade</label>
-                                <input type="text" id="p-unit" placeholder="ex: un, kg, m³" value="${product?.unit || 'un'}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Unidade de Medida</label>
+                                <input type="text" id="p-unit" placeholder="ex: un, kg, m³" value="${product?.unit || 'un'}" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm">
                             </div>
                         </div>
 
                         <!-- Ficha Técnica (BOM) Section -->
                         <div id="recipe-section" class="${product?.type === 'final' ? '' : 'hidden'} mt-6 pt-6 border-t border-slate-100 dark:border-slate-700">
-                            <div class="flex justify-between items-center mb-4">
-                                <h4 class="font-bold flex items-center gap-2">
-                                    <i data-lucide="clipboard-list" class="w-5 h-5 text-primary-600"></i>
-                                    Ficha Técnica (Composição)
+                            <div class="flex flex-col gap-2 mb-4">
+                                <h4 class="font-black text-xs uppercase tracking-widest text-slate-900 dark:text-white flex items-center gap-2">
+                                    <i data-lucide="clipboard-list" class="w-4 h-4 text-primary-600"></i>
+                                    Composição do Produto
                                 </h4>
-                                <div id="recipe-total-cost" class="px-3 py-1 bg-primary-50 dark:bg-primary-900/20 text-primary-600 text-xs font-bold rounded-lg border border-primary-100 dark:border-primary-800">
-                                    Custo Matéria-Prima: R$ 0,00
+                                <div id="recipe-total-cost" class="p-3 bg-primary-50 dark:bg-primary-900/10 text-primary-600 text-[10px] font-black uppercase tracking-widest rounded-xl border border-primary-100 dark:border-primary-900/30">
+                                    Custo de Matéria-Prima: R$ 0,00
                                 </div>
                             </div>
                             <div id="recipe-items" class="space-y-3 mb-4">
                                 ${product?.recipe ? product.recipe.map((item, idx) => renderRecipeItem(item, idx, rawMaterials)).join('') : ''}
                             </div>
-                            <div class="flex justify-between items-center">
-                                <button type="button" onclick="addRecipeItem()" class="text-sm font-bold text-primary-600 flex items-center gap-1 hover:underline">
+                            <div class="flex flex-col gap-3">
+                                <button type="button" onclick="addRecipeItem()" class="w-full py-3 bg-slate-50 dark:bg-slate-700/50 border border-dashed border-slate-200 dark:border-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest text-primary-600 flex items-center justify-center gap-2 hover:bg-primary-50 transition-all">
                                     <i data-lucide="plus-circle" class="w-4 h-4"></i> Adicionar Insumo
                                 </button>
-                                <button type="button" id="btn-apply-cost" onclick="applyRecipeCost()" class="hidden text-[10px] bg-primary-600 text-white px-3 py-1.5 rounded-lg font-bold hover:brightness-95 active:scale-95 transition-all">
-                                    Aplicar Custo Sugerido
+                                <button type="button" id="btn-apply-cost" onclick="applyRecipeCost()" class="hidden w-full py-3 bg-primary-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:brightness-95 active:scale-95 transition-all">
+                                    Aplicar Custo Calculado
                                 </button>
                             </div>
                         </div>
 
-                        <div class="flex justify-end gap-3 pt-6 border-t border-slate-100 dark:border-slate-700">
-                            <button type="button" onclick="closeModal()" class="px-6 py-2 rounded-xl border border-slate-200 dark:border-slate-700 font-semibold hover:bg-slate-50 dark:hover:bg-slate-700">Cancelar</button>
-                            <button type="submit" class="px-6 py-2 rounded-xl bg-primary-600 text-white font-semibold hover:bg-primary-700 shadow-lg shadow-primary-500/20 transition-all active:scale-95">Salvar Produto</button>
+                        <div class="flex flex-col sm:flex-row justify-end gap-3 pt-6 border-t border-slate-100 dark:border-slate-700">
+                            <button type="button" onclick="closeModal()" class="w-full sm:w-auto px-6 py-4 sm:py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">Cancelar</button>
+                            <button type="submit" class="w-full sm:w-auto px-6 py-4 sm:py-2.5 rounded-2xl bg-primary-600 text-white font-black text-xs uppercase tracking-widest hover:bg-primary-700 shadow-lg shadow-primary-500/20 transition-all active:scale-95">Salvar Item</button>
                         </div>
                     </form>
                 </div>
             `;
             openModal(html);
-            toggleRecipeField(); // Garante visibilidade correta inicial
+            toggleRecipeField();
+            try { lucide.createIcons(); } catch (_) {}
             
             document.getElementById('product-form').onsubmit = (e) => {
                 e.preventDefault();
                 
-                // Collect recipe items
                 const recipe = [];
                 if (document.getElementById('p-type').value === 'final') {
                     document.querySelectorAll('.recipe-row').forEach(row => {
@@ -2117,7 +2254,7 @@
                 saveData();
                 closeModal();
                 renderEstoque();
-                showToast(product ? 'Produto atualizado!' : 'Produto cadastrado!');
+                showToast(product ? 'Item atualizado!' : 'Item cadastrado!');
             };
         }
 
@@ -2127,34 +2264,44 @@
             const sellContainer = document.getElementById('p-sell-container');
             const helperContainer = document.getElementById('p-helper-container');
             
-            recipeSection.classList.toggle('hidden', type !== 'final');
-            sellContainer.classList.toggle('hidden', type === 'raw');
-            helperContainer.classList.toggle('hidden', type === 'raw');
+            if (recipeSection) recipeSection.classList.toggle('hidden', type !== 'final');
+            if (sellContainer) sellContainer.classList.toggle('hidden', type === 'raw');
+            if (helperContainer) helperContainer.classList.toggle('hidden', type === 'raw');
             
             if (type === 'raw') {
-                document.getElementById('p-sell').value = 0;
-                document.getElementById('p-helper').value = 0;
+                const sellInput = document.getElementById('p-sell');
+                const helperInput = document.getElementById('p-helper');
+                if (sellInput) sellInput.value = 0;
+                if (helperInput) helperInput.value = 0;
             }
+            
+            try { lucide.createIcons(); } catch (_) {}
         }
 
         function renderRecipeItem(item = null, idx = 0, materials = []) {
             const safeMaterials = materials.length > 0 ? materials : appState.inventory.filter(p => p.type === 'raw');
             return `
-                <div class="recipe-row flex gap-3 items-end animate-fade-in">
-                    <div class="flex-1">
-                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Insumo</label>
-                        <select class="recipe-material w-full p-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none text-sm">
-                            <option value="">Selecione...</option>
-                            ${safeMaterials.map(m => `<option value="${m.id}" ${item?.productId === m.id ? 'selected' : ''}>${m.name} (${m.unit})</option>`).join('')}
-                        </select>
+                <div class="recipe-row bg-slate-50 dark:bg-slate-700/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-600 animate-fade-in space-y-3">
+                    <div class="flex justify-between items-center">
+                        <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Insumo #${idx + 1}</span>
+                        <button type="button" onclick="this.parentElement.parentElement.remove(); calculateRecipeCost();" class="p-2 text-slate-300 hover:text-danger transition-colors">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
                     </div>
-                    <div class="w-32">
-                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Qtd p/ Unidade</label>
-                        <input type="number" step="0.001" class="recipe-qty w-full p-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none text-sm" value="${item?.qty || ''}">
+                    <div class="grid grid-cols-1 gap-3">
+                        <div>
+                            <select class="recipe-material w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-xs font-bold appearance-none">
+                                <option value="">Selecione...</option>
+                                ${safeMaterials.map(m => `<option value="${m.id}" ${item?.productId === m.id ? 'selected' : ''}>${m.name} (${m.unit})</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <div class="flex-1">
+                                <input type="number" step="0.001" placeholder="Qtd p/ Unidade" class="recipe-qty w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-xs font-black" value="${item?.qty || ''}">
+                            </div>
+                            <span class="text-[10px] font-bold text-slate-400 uppercase w-12">Por un</span>
+                        </div>
                     </div>
-                    <button type="button" onclick="this.parentElement.remove()" class="p-2.5 text-slate-400 hover:text-danger">
-                        <i data-lucide="trash-2" class="w-4 h-4"></i>
-                    </button>
                 </div>
             `;
         }
@@ -3670,50 +3817,193 @@
         }
 
         function openStockMovementModal() {
+            if (!appState.inventory || appState.inventory.length === 0) {
+                showToast("Não há produtos no inventário para ajustar.", "error");
+                return;
+            }
+
             let html = `
                 <div class="p-6">
-                    <h3 class="text-xl font-bold mb-6">Movimentação de Estoque</h3>
-                    <form id="stock-move-form" class="space-y-4">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tighter">Ajuste de Estoque</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <form id="stock-move-form" class="space-y-5">
                         <div>
-                            <label class="block text-sm font-medium mb-1">Produto</label>
-                            <select id="sm-prod" required class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">
-                                ${appState.inventory.map(p => `<option value="${p.id}">${p.name} (Atual: ${p.stock})</option>`).join('')}
+                            <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Produto para Ajuste</label>
+                            <select id="sm-prod" required class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm appearance-none">
+                                <option value="">Selecione o item...</option>
+                                ${appState.inventory.map(p => `<option value="${p.id}">${p.name} (Atual: ${p.stock} ${p.unit})</option>`).join('')}
                             </select>
                         </div>
-                        <div class="grid grid-cols-2 gap-4">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-sm font-medium mb-1">Tipo</label>
-                                <select id="sm-type" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">
-                                    <option value="entrada">Entrada (Compra)</option>
-                                    <option value="saida">Saída (Ajuste/Consumo)</option>
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Tipo de Movimento</label>
+                                <select id="sm-type" onchange="toggleStockPriceFields()" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm appearance-none">
+                                    <option value="entrada">Entrada (Compra/Sobra)</option>
+                                    <option value="saida">Saída (Ajuste/Quebra)</option>
                                 </select>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium mb-1">Quantidade</label>
-                                <input type="number" id="sm-qty" required class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">
+                                <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Quantidade</label>
+                                <input type="number" id="sm-qty" required placeholder="0.00" step="0.001" min="0.001" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-sm">
                             </div>
                         </div>
-                        <div class="flex justify-end gap-3 pt-4">
-                            <button type="button" onclick="closeModal()" class="px-6 py-2 rounded-xl border border-slate-200 dark:border-slate-700 font-semibold">Cancelar</button>
-                            <button type="submit" class="px-6 py-2 rounded-xl bg-primary-600 text-white font-semibold">Confirmar</button>
+
+                        <!-- Campos Financeiros Opcionais -->
+                        <div id="sm-finance-fields" class="space-y-4 p-4 bg-primary-50/50 dark:bg-primary-900/10 rounded-2xl border border-primary-100 dark:border-primary-800/30">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-[10px] font-black uppercase tracking-widest text-primary-600 mb-1.5">Preço Unitário (R$)</label>
+                                    <input type="number" id="sm-price" placeholder="0.00" step="0.01" min="0" class="w-full p-3 bg-white dark:bg-slate-800 border border-primary-200 dark:border-primary-800 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-black uppercase tracking-widest text-primary-600 mb-1.5">Valor Total (R$)</label>
+                                    <input type="number" id="sm-total" placeholder="0.00" step="0.01" min="0" class="w-full p-3 bg-white dark:bg-slate-800 border border-primary-200 dark:border-primary-800 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm">
+                                </div>
+                            </div>
+                            <label class="flex items-center gap-3 cursor-pointer group">
+                                <div class="relative flex items-center">
+                                    <input type="checkbox" id="sm-gen-expense" class="peer hidden">
+                                    <div class="w-5 h-5 border-2 border-primary-200 dark:border-primary-800 rounded-lg peer-checked:bg-primary-600 peer-checked:border-primary-600 transition-all"></div>
+                                    <i data-lucide="check" class="w-3.5 h-3.5 text-white absolute left-0.5 top-0.5 opacity-0 peer-checked:opacity-100 transition-all"></i>
+                                </div>
+                                <span class="text-xs font-black text-primary-700 dark:text-primary-400 uppercase tracking-tight">Gerar despesa no financeiro</span>
+                            </label>
+                        </div>
+
+                        <div class="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                            <button type="button" onclick="closeModal()" class="w-full sm:w-auto px-6 py-4 sm:py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">Cancelar</button>
+                            <button type="submit" id="btn-confirm-stock" class="w-full sm:w-auto px-6 py-4 sm:py-2.5 rounded-2xl bg-primary-600 text-white font-black text-xs uppercase tracking-widest hover:brightness-95 shadow-lg shadow-primary-500/20 transition-all active:scale-95">Confirmar Ajuste</button>
                         </div>
                     </form>
                 </div>
             `;
             openModal(html);
-            document.getElementById('stock-move-form').onsubmit = (e) => {
-                e.preventDefault();
-                const pId = parseInt(document.getElementById('sm-prod').value);
-                const type = document.getElementById('sm-type').value;
-                const qty = parseInt(document.getElementById('sm-qty').value);
-                
-                const product = appState.inventory.find(p => p.id === pId);
-                if (type === 'entrada') product.stock += qty;
-                else product.stock = Math.max(0, product.stock - qty);
-                
-                saveData(); closeModal(); renderEstoque(); showToast('Estoque atualizado!');
+            try { lucide.createIcons(); } catch (_) {}
+            
+            const unitInput = document.getElementById('sm-price');
+            const totalInput = document.getElementById('sm-total');
+            const qtyInput = document.getElementById('sm-qty');
+            const prodSelect = document.getElementById('sm-prod');
+            const typeSelect = document.getElementById('sm-type');
+            const genExpenseCheck = document.getElementById('sm-gen-expense');
+            const form = document.getElementById('stock-move-form');
+
+            const calcTotal = () => {
+                const qty = parseFloat(qtyInput.value) || 0;
+                const unit = parseFloat(unitInput.value) || 0;
+                if (qty > 0 && unit >= 0) totalInput.value = (qty * unit).toFixed(2);
             };
+
+            const calcUnit = () => {
+                const qty = parseFloat(qtyInput.value) || 0;
+                const total = parseFloat(totalInput.value) || 0;
+                if (qty > 0 && total >= 0) unitInput.value = (total / qty).toFixed(2);
+            };
+
+            if (unitInput) unitInput.oninput = calcTotal;
+            if (totalInput) totalInput.oninput = calcUnit;
+            if (qtyInput) qtyInput.oninput = calcTotal;
+
+            if (form) {
+                form.onsubmit = (e) => {
+                    e.preventDefault();
+                    
+                    try {
+                        const pId = parseInt(prodSelect.value);
+                        if (isNaN(pId)) {
+                            showToast("Por favor, selecione um produto.", "error");
+                            return;
+                        }
+
+                        const type = typeSelect.value;
+                        const qty = parseFloat(qtyInput.value);
+                        if (isNaN(qty) || qty <= 0) {
+                            showToast("Por favor, informe uma quantidade válida.", "error");
+                            return;
+                        }
+
+                        const unitPrice = parseFloat(unitInput?.value) || 0;
+                        const totalPrice = parseFloat(totalInput?.value) || 0;
+                        const genExpense = genExpenseCheck?.checked || false;
+                        
+                        const product = appState.inventory.find(p => p.id === pId);
+                        if (!product) {
+                            showToast("Produto não encontrado.", "error");
+                            return;
+                        }
+
+                        const oldStock = product.stock;
+                        if (type === 'entrada') {
+                            product.stock += qty;
+                        } else {
+                            product.stock = Math.max(0, product.stock - qty);
+                        }
+                        
+                        // Inicializa stockMovements se não existir (segurança extra)
+                        if (!Array.isArray(appState.stockMovements)) appState.stockMovements = [];
+
+                        // Grava no histórico de movimentos
+                        const movement = {
+                            id: Date.now(),
+                            productId: pId,
+                            productName: product.name,
+                            type: type,
+                            qty: qty,
+                            unitPrice: unitPrice,
+                            totalPrice: totalPrice,
+                            date: new Date().toISOString().split('T')[0],
+                            oldStock: oldStock,
+                            newStock: product.stock
+                        };
+                        appState.stockMovements.push(movement);
+
+                        // Se for entrada com preço e marcado para gerar despesa
+                        if (type === 'entrada' && totalPrice > 0 && genExpense) {
+                            if (!Array.isArray(appState.transactions)) appState.transactions = [];
+                            
+                            const trans = {
+                                id: Date.now() + 1,
+                                type: 'saida',
+                                description: `Compra: ${qty} ${product.unit} de ${product.name}`,
+                                amount: totalPrice,
+                                date: movement.date,
+                                category: 'Compra de Matéria-Prima',
+                                account: 'Caixa Principal',
+                                paymentMethod: 'Dinheiro'
+                            };
+                            appState.transactions.push(trans);
+                        }
+
+                        // Atualiza custo médio do produto se for entrada
+                        if (type === 'entrada' && unitPrice > 0) {
+                            product.costPrice = unitPrice;
+                        }
+                        
+                        saveData(); 
+                        closeModal(); 
+                        renderEstoque(); 
+                        showToast(`Estoque de ${product.name} atualizado!`);
+                    } catch (err) {
+                        console.error("Erro ao processar ajuste de estoque:", err);
+                        showToast("Erro ao processar o ajuste. Tente novamente.", "error");
+                    }
+                };
+            }
         }
+
+        window.toggleStockPriceFields = () => {
+            const type = document.getElementById('sm-type').value;
+            const fields = document.getElementById('sm-finance-fields');
+            if (type === 'entrada') {
+                fields.classList.remove('hidden');
+            } else {
+                fields.classList.add('hidden');
+            }
+        };
 
         // --- EMPLOYEES RENDER ---
         function renderFuncionarios() {
@@ -6030,6 +6320,13 @@
                         <h4 class="font-bold dark:text-white">Fluxo de Caixa</h4>
                         <p class="text-xs text-slate-500 mt-1">Movimentações por período</p>
                     </div>
+                    <div onclick="generateReport('materia_prima')" class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 hover:border-primary-500 cursor-pointer transition-all group text-center">
+                        <div class="w-14 h-14 bg-blue-50 dark:bg-blue-900/20 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                            <i data-lucide="layers" class="w-8 h-8 text-blue-600"></i>
+                        </div>
+                        <h4 class="font-bold dark:text-white">Matéria-Prima</h4>
+                        <p class="text-xs text-slate-500 mt-1">Gasto detalhado e evolução</p>
+                    </div>
                 </div>
             `;
             document.getElementById('content-area').innerHTML = html;
@@ -6080,6 +6377,20 @@
 
             const completedSales = appState.sales
                 .filter(s => s.status === 'completed' && s.date && (!start || s.date >= start) && (!end || s.date <= end));
+            
+            // Agrupamento por produto (Faturamento Bruto)
+            const salesByProductMap = new Map();
+            completedSales.forEach(s => {
+                (s.items || []).forEach(item => {
+                    const name = item.name || 'Produto';
+                    const amount = (item.price || 0) * (item.qty || 0);
+                    salesByProductMap.set(name, (salesByProductMap.get(name) || 0) + amount);
+                });
+            });
+            const salesByProduct = Array.from(salesByProductMap.entries())
+                .map(([key, value]) => ({ key, value }))
+                .sort((a, b) => b.value - a.value);
+
             const pendingSalesCount = appState.sales.filter(s => s.status === 'pending').length;
             const salesCount = completedSales.length;
             const salesGross = completedSales.reduce((acc, s) => acc + (s.total || 0), 0);
@@ -6104,6 +6415,7 @@
                 net,
                 entradasByCategory,
                 saidasByCategory,
+                salesByProduct, // Adicionado
                 byAccount,
                 byPayment,
                 salesCount,
@@ -6167,10 +6479,33 @@
 
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 overflow-hidden">
-                            <div class="p-4 border-b border-slate-100 dark:border-slate-700">
-                                <p class="text-xs font-black uppercase tracking-widest text-slate-400">Entradas por Categoria</p>
+                            <div class="p-4 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+                                <p class="text-xs font-black uppercase tracking-widest text-slate-400">Vendas por Produto (Faturamento)</p>
+                                <span class="text-[10px] font-bold text-slate-400 uppercase">Total: ${formatCurrency(dre.salesGross)}</span>
                             </div>
                             <div class="p-4 space-y-3">
+                                ${dre.salesByProduct.length ? dre.salesByProduct.map(row => {
+                                    const perc = dre.salesGross > 0 ? (row.value / dre.salesGross) : 0;
+                                    return `
+                                        <div class="space-y-1">
+                                            <div class="flex justify-between items-center text-xs">
+                                                <span class="font-bold text-slate-600 dark:text-slate-300">${row.key}</span>
+                                                <span class="font-black text-primary-600">${formatCurrency(row.value)}</span>
+                                            </div>
+                                            <div class="h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                                                <div class="h-1.5 bg-primary-500 rounded-full" style="width:${Math.round(perc * 100)}%"></div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('') : '<div class="py-6 text-center text-slate-400 text-sm">Sem vendas no período.</div>'}
+                            </div>
+                        </div>
+
+                        <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 overflow-hidden flex flex-col">
+                            <div class="p-4 border-b border-slate-100 dark:border-slate-700">
+                                <p class="text-xs font-black uppercase tracking-widest text-slate-400">Entradas por Categoria (Fluxo de Caixa)</p>
+                            </div>
+                            <div class="p-4 space-y-3 flex-1">
                                 ${dre.entradasByCategory.length ? dre.entradasByCategory.map(row => {
                                     const perc = maxInCat > 0 ? (row.value / maxInCat) : 0;
                                     return `
@@ -6179,35 +6514,35 @@
                                                 <span class="font-bold text-slate-600 dark:text-slate-300">${row.key}</span>
                                                 <span class="font-black text-success">${formatCurrency(row.value)}</span>
                                             </div>
-                                            <div class="h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                                                <div class="h-2 bg-success rounded-full" style="width:${Math.round(perc * 100)}%"></div>
+                                            <div class="h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                                                <div class="h-1.5 bg-success rounded-full" style="width:${Math.round(perc * 100)}%"></div>
                                             </div>
                                         </div>
                                     `;
                                 }).join('') : '<div class="py-6 text-center text-slate-400 text-sm">Sem entradas no período.</div>'}
                             </div>
                         </div>
+                    </div>
 
-                        <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 overflow-hidden">
-                            <div class="p-4 border-b border-slate-100 dark:border-slate-700">
-                                <p class="text-xs font-black uppercase tracking-widest text-slate-400">Saídas por Categoria</p>
-                            </div>
-                            <div class="p-4 space-y-3">
-                                ${dre.saidasByCategory.length ? dre.saidasByCategory.map(row => {
-                                    const perc = maxOutCat > 0 ? (row.value / maxOutCat) : 0;
-                                    return `
-                                        <div class="space-y-1">
-                                            <div class="flex justify-between items-center text-xs">
-                                                <span class="font-bold text-slate-600 dark:text-slate-300">${row.key}</span>
-                                                <span class="font-black text-danger">-${formatCurrency(row.value)}</span>
-                                            </div>
-                                            <div class="h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                                                <div class="h-2 bg-danger rounded-full" style="width:${Math.round(perc * 100)}%"></div>
-                                            </div>
+                    <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 overflow-hidden">
+                        <div class="p-4 border-b border-slate-100 dark:border-slate-700">
+                            <p class="text-xs font-black uppercase tracking-widest text-slate-400">Saídas por Categoria</p>
+                        </div>
+                        <div class="p-4 space-y-3">
+                            ${dre.saidasByCategory.length ? dre.saidasByCategory.map(row => {
+                                const perc = maxOutCat > 0 ? (row.value / maxOutCat) : 0;
+                                return `
+                                    <div class="space-y-1">
+                                        <div class="flex justify-between items-center text-xs">
+                                            <span class="font-bold text-slate-600 dark:text-slate-300">${row.key}</span>
+                                            <span class="font-black text-danger">-${formatCurrency(row.value)}</span>
                                         </div>
-                                    `;
-                                }).join('') : '<div class="py-6 text-center text-slate-400 text-sm">Sem saídas no período.</div>'}
-                            </div>
+                                        <div class="h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                                            <div class="h-1.5 bg-danger rounded-full" style="width:${Math.round(perc * 100)}%"></div>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('') : '<div class="py-6 text-center text-slate-400 text-sm">Sem saídas no período.</div>'}
                         </div>
                     </div>
 
@@ -6747,6 +7082,170 @@
                         </div>
                     </div>
                 `;
+            } else if (type === 'materia_prima') {
+                title = "Relatório de Matéria-Prima";
+                
+                const now = new Date();
+                const thisMonth = now.toISOString().slice(0, 7);
+                const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+                
+                const purchases = (appState.stockMovements || []).filter(m => m.type === 'entrada');
+                
+                const getMonthStats = (month) => {
+                    const monthPurchases = purchases.filter(p => p.date.startsWith(month));
+                    const stats = {};
+                    monthPurchases.forEach(p => {
+                        if (!stats[p.productId]) {
+                            stats[p.productId] = { name: p.productName, totalQty: 0, totalSpent: 0, productId: p.productId };
+                        }
+                        stats[p.productId].totalQty += p.qty;
+                        stats[p.productId].totalSpent += p.totalPrice;
+                    });
+                    Object.values(stats).forEach(s => {
+                        s.avgPrice = s.totalQty > 0 ? s.totalSpent / s.totalQty : 0;
+                    });
+                    return stats;
+                };
+
+                const currentStats = getMonthStats(thisMonth);
+                const previousStats = getMonthStats(lastMonth);
+                
+                const totalSpentThisMonth = Object.values(currentStats).reduce((acc, s) => acc + s.totalSpent, 0);
+                const totalSpentLastMonth = Object.values(previousStats).reduce((acc, s) => acc + s.totalSpent, 0);
+                const diffPercent = totalSpentLastMonth > 0 ? ((totalSpentThisMonth - totalSpentLastMonth) / totalSpentLastMonth * 100).toFixed(1) : 0;
+
+                content = `
+                    <div class="space-y-6">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800">
+                                <p class="text-[10px] font-bold text-blue-600 uppercase mb-1">Total Gasto (Este Mês)</p>
+                                <p class="text-xl font-black text-blue-600">${formatCurrency(totalSpentThisMonth)}</p>
+                                <p class="text-[10px] ${diffPercent >= 0 ? 'text-red-500' : 'text-green-500'} font-bold mt-1">
+                                    ${totalSpentLastMonth > 0 ? (diffPercent >= 0 ? '↑' : '↓') + ' ' + Math.abs(diffPercent) + '% em relação ao mês anterior' : 'Primeiro mês com registros'}
+                                </p>
+                            </div>
+                            <div class="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
+                                <p class="text-[10px] font-bold text-slate-500 uppercase mb-1">Insumos Comprados</p>
+                                <p class="text-xl font-black dark:text-white">${Object.keys(currentStats).length}</p>
+                                <p class="text-[10px] text-slate-400 mt-1">Total de itens diferentes este mês</p>
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-[11px] text-left">
+                                <thead class="bg-slate-50 dark:bg-slate-700/50 text-slate-500">
+                                    <tr>
+                                        <th class="px-2 py-3 font-black uppercase tracking-widest">Insumo</th>
+                                        <th class="px-2 py-3 text-right font-black uppercase tracking-widest">Qtd</th>
+                                        <th class="px-2 py-3 text-right font-black uppercase tracking-widest">Média Un.</th>
+                                        <th class="px-2 py-3 text-right font-black uppercase tracking-widest">Mês Ant.</th>
+                                        <th class="px-2 py-3 text-right font-black uppercase tracking-widest">Var.</th>
+                                        <th class="px-2 py-3 text-right font-black uppercase tracking-widest">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
+                                    ${Object.values(currentStats).length > 0 ? Object.values(currentStats).sort((a,b) => b.totalSpent - a.totalSpent).map(s => {
+                                        const prev = previousStats[s.productId];
+                                        const varPercent = prev && prev.avgPrice > 0 ? ((s.avgPrice - prev.avgPrice) / prev.avgPrice * 100).toFixed(1) : null;
+                                        return `
+                                            <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                                                <td class="px-2 py-3 font-bold text-slate-900 dark:text-white">${s.name}</td>
+                                                <td class="px-2 py-3 text-right font-medium">${s.totalQty.toFixed(1)}</td>
+                                                <td class="px-2 py-3 text-right font-medium">${formatCurrency(s.avgPrice)}</td>
+                                                <td class="px-2 py-3 text-right text-slate-400">${prev ? formatCurrency(prev.avgPrice) : '-'}</td>
+                                                <td class="px-2 py-3 text-right font-black ${varPercent > 0 ? 'text-red-500' : varPercent < 0 ? 'text-green-500' : 'text-slate-400'}">
+                                                    ${varPercent !== null ? (varPercent > 0 ? '+' : '') + varPercent + '%' : 'Novo'}
+                                                </td>
+                                                <td class="px-2 py-3 text-right font-black text-slate-900 dark:text-white">${formatCurrency(s.totalSpent)}</td>
+                                            </tr>
+                                        `;
+                                    }).join('') : '<tr><td colspan="6" class="px-2 py-8 text-center text-slate-400 italic text-xs">Nenhuma compra registrada este mês.</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        ${Object.values(currentStats).length > 0 ? `
+                        <div class="bg-slate-50 dark:bg-slate-700/30 p-4 rounded-2xl border border-slate-100 dark:border-slate-700">
+                            <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
+                                <i data-lucide="trending-up" class="w-3.5 h-3.5 text-primary-500"></i>
+                                Evolução de Preços (Top 3 Itens)
+                            </h4>
+                            <div class="h-48 w-full">
+                                <canvas id="priceEvolutionChart"></canvas>
+                            </div>
+                        </div>
+                        ` : ''}
+                    </div>
+                `;
+
+                if (Object.values(currentStats).length > 0) {
+                    setTimeout(() => {
+                        const canvas = document.getElementById('priceEvolutionChart');
+                        if (!canvas) return;
+                        const ctx = canvas.getContext('2d');
+                        const last6Months = [];
+                        for(let i=5; i>=0; i--) {
+                            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                            last6Months.push(d.toISOString().slice(0, 7));
+                        }
+
+                        const topItems = Object.values(currentStats)
+                            .sort((a,b) => b.totalSpent - a.totalSpent)
+                            .slice(0, 3);
+
+                        const datasets = topItems.map((item, idx) => {
+                            const colors = ['#3b82f6', '#8b5cf6', '#ec4899'];
+                            return {
+                                label: item.name,
+                                data: last6Months.map(m => {
+                                    const mPurchases = purchases.filter(p => p.productId === item.productId && p.date.startsWith(m));
+                                    if (mPurchases.length === 0) return null;
+                                    const totalQ = mPurchases.reduce((acc, p) => acc + p.qty, 0);
+                                    const totalS = mPurchases.reduce((acc, p) => acc + p.totalPrice, 0);
+                                    return totalS / totalQ;
+                                }),
+                                borderColor: colors[idx],
+                                backgroundColor: colors[idx] + '10',
+                                borderWidth: 2,
+                                tension: 0.3,
+                                fill: true,
+                                spanGaps: true,
+                                pointRadius: 3,
+                                pointBackgroundColor: colors[idx]
+                            };
+                        });
+
+                        new Chart(ctx, {
+                            type: 'line',
+                            data: {
+                                labels: last6Months.map(m => {
+                                    const [year, month] = m.split('-');
+                                    const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+                                    return months[parseInt(month)-1];
+                                }),
+                                datasets: datasets
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: {
+                                    legend: { position: 'bottom', labels: { boxWidth: 8, font: { size: 9, weight: 'bold' }, usePointStyle: true } },
+                                    tooltip: {
+                                        callbacks: {
+                                            label: (context) => `${context.dataset.label}: ${formatCurrency(context.parsed.y)}`
+                                        }
+                                    }
+                                },
+                                scales: {
+                                    y: { beginAtZero: false, ticks: { font: { size: 8 }, callback: (val) => 'R$ ' + val } },
+                                    x: { ticks: { font: { size: 8 } } }
+                                }
+                            }
+                        });
+                        lucide.createIcons();
+                    }, 200);
+                }
             } else if (type === 'caixa') {
                 title = "Relatório de Fluxo de Caixa";
                 
