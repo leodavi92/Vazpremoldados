@@ -979,13 +979,17 @@
         };
 
         function renderProducao() {
-            // Cálculo de Produção Mensal (Resumo por Produto)
+            // Cálculo de Produção (Sincronizado com Ponto de Equilíbrio)
             const now = new Date();
-            const currentMonth = now.toISOString().substring(0, 7); // YYYY-MM
-            const monthName = now.toLocaleString('pt-BR', { month: 'long' });
+            const todayStr = now.toISOString().split('T')[0];
+            const currentMonth = todayStr.substring(0, 7);
+            
+            let resetDateStr = appState.config.breakEvenResetDate || currentMonth + '-01';
+            let resetDate = new Date(resetDateStr);
+            let daysElapsed = Math.max(1, Math.ceil((now - resetDate) / (1000 * 60 * 60 * 24)));
             
             const monthlyProductionMap = new Map();
-            appState.production.filter(p => p.date.startsWith(currentMonth)).forEach(p => {
+            appState.production.filter(p => p.date >= resetDateStr).forEach(p => {
                 const name = p.productName || 'Produto';
                 monthlyProductionMap.set(name, (monthlyProductionMap.get(name) || 0) + p.qty);
             });
@@ -1079,7 +1083,7 @@
                     <div class="p-4 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-700/30 flex justify-between items-center">
                         <h4 class="font-black text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
                             <i data-lucide="bar-chart-2" class="w-4 h-4"></i>
-                            Fabricado em ${monthName}
+                            Produção no Ciclo (Dia ${daysElapsed}/30)
                         </h4>
                         <span class="text-[10px] font-black text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-3 py-1 rounded-full uppercase tracking-tighter">Total: ${totalMonthly} un</span>
                     </div>
