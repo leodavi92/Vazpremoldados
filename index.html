@@ -494,7 +494,8 @@
                 { id: 2, name: 'Vibrador de Imersão', lastMaintenance: '2026-03-01', maintenanceInterval: 30, status: 'ok' }
             ],
             accounts: ['Caixa Principal', 'Conta Bancária', 'Reserva Emergência'],
-            stockMovements: []
+            stockMovements: [],
+            breakEvenHistory: []
         };
 
         function createEmptyState() {
@@ -533,7 +534,8 @@
                 fixedAccounts: [],
                 equipment: [],
                 accounts: ['Caixa Principal'],
-                stockMovements: []
+                stockMovements: [],
+                breakEvenHistory: []
             };
         }
 
@@ -572,6 +574,7 @@
         if (!Array.isArray(appState.equipment)) appState.equipment = [];
         if (!Array.isArray(appState.accounts)) appState.accounts = ['Caixa Principal'];
         if (!Array.isArray(appState.stockMovements)) appState.stockMovements = [];
+        if (!Array.isArray(appState.breakEvenHistory)) appState.breakEvenHistory = [];
         
         // MIGRATION: Force update categories to ensure user sees the new factory categories
         appState.config.categories = INITIAL_STATE.config.categories;
@@ -693,6 +696,277 @@
             }
         }
 
+        function calculateBreakEvenData(resetDateStr, endDateStr = null) {
+            const salariesCosts = (appState.employees || []).reduce((acc, emp) => acc + (emp.salary || 0), 0);
+            const baseFixedCosts = (appState.fixedAccounts || []).reduce((acc, a) => acc + (a.amount || 0), 0) + salariesCosts;
+            
+            const monthlySales = (appState.sales || []).filter(s => {
+                const isAfterStart = s.date >= resetDateStr;
+                const isBeforeEnd = endDateStr ? s.date <= endDateStr : true;
+                return isAfterStart && isBeforeEnd && s.status === 'completed';
+            });
+            
+            const totalRevenue = monthlySales.reduce((acc, s) => acc + (s.total || 0), 0);
+            
+            const totalVariableCosts = monthlySales.reduce((acc, s) => {
+                const materialsCost = (s.items || []).reduce((itemAcc, item) => {
+                    const product = (appState.inventory || []).find(p => p.id === item.productId);
+                    return itemAcc + (product ? ((product.costPrice || 0) * (item.qty || 0)) : 0);
+                }, 0);
+                return acc + materialsCost + (s.deliveryHelperCostTotal || 0) + (s.fee || 0);
+            }, 0);
+
+            const contributionMargin = totalRevenue - totalVariableCosts;
+            const contributionMarginPct = totalRevenue > 0 ? (contributionMargin / totalRevenue) : 0.35;
+            const breakEvenValue = contributionMarginPct > 0 ? (baseFixedCosts / contributionMarginPct) : baseFixedCosts;
+            const progress = breakEvenValue > 0 ? Math.min(100, (totalRevenue / breakEvenValue) * 100) : 100;
+            
+            return {
+                baseFixedCosts,
+                totalRevenue,
+                breakEvenValue,
+                progress,
+                isReached: totalRevenue >= breakEvenValue,
+                contributionMarginPct
+            };
+        }
+
+        function reconstructPastCycles() {
+            if (appState.breakEvenHistory && appState.breakEvenHistory.length > 0) return;
+            
+            const { resetDateStr } = getBreakEvenConfig();
+            if (!resetDateStr) return;
+
+            // Encontrar a data mais antiga de venda ou transação
+            let allDates = [
+                ...(appState.sales || []).map(s => s.date),
+                ...(appState.transactions || []).map(t => t.date)
+            ].filter(d => d).sort();
+
+            if (allDates.length === 0) return;
+            
+            let earliestDateStr = allDates[0];
+            let currentStart = new Date(resetDateStr);
+            
+            // Retroceder em blocos de 30 dias a partir do resetDateStr atual
+            let history = [];
+            let iterations = 0;
+            const maxIterations = 12; // Limite de 1 ano para reconstrução automática
+
+            while (iterations < maxIterations) {
+                // O fim do ciclo anterior é 1 dia antes do início do ciclo seguinte
+                let cycleEnd = new Date(currentStart);
+                cycleEnd.setDate(cycleEnd.getDate() - 1);
+                let cycleEndStr = cycleEnd.toISOString().split('T')[0];
+
+                // O início do ciclo anterior é 30 dias antes do fim
+                let cycleStart = new Date(cycleEnd);
+                cycleStart.setDate(cycleStart.getDate() - 29);
+                let cycleStartStr = cycleStart.toISOString().split('T')[0];
+
+                // Se o início do ciclo for posterior à data mais antiga, calculamos
+                // Ou se o fim do ciclo for posterior à data mais antiga (para pegar o último ciclo incompleto)
+                if (cycleEndStr < earliestDateStr) break;
+
+                const data = calculateBreakEvenData(cycleStartStr, cycleEndStr);
+                
+                // Só adiciona se houver alguma receita ou se for um ciclo completo dentro do período de dados
+                if (data.totalRevenue > 0 || cycleEndStr >= earliestDateStr) {
+                    history.push({
+                        id: Date.now() - (iterations * 1000),
+                        startDate: cycleStartStr,
+                        endDate: cycleEndStr,
+                        revenue: data.totalRevenue,
+                        target: data.breakEvenValue,
+                        reached: data.isReached,
+                        progress: data.progress
+                    });
+                }
+
+                currentStart = cycleStart;
+                iterations++;
+            }
+
+            if (history.length > 0) {
+                appState.breakEvenHistory = history;
+                saveData();
+            }
+        }
+
+        function archiveCurrentCycle() {
+            // Não usamos getBreakEvenConfig aqui para evitar recursão
+            const resetDateStr = appState.config.breakEvenResetDate;
+            if (!resetDateStr) return;
+
+            const [y1, m1, d1] = resetDateStr.split('-').map(Number);
+            const date1 = new Date(y1, m1 - 1, d1);
+            const endObj = new Date(date1);
+            endObj.setDate(date1.getDate() + 29);
+            const endDateStr = endObj.getFullYear() + '-' + String(endObj.getMonth() + 1).padStart(2, '0') + '-' + String(endObj.getDate()).padStart(2, '0');
+
+            const data = calculateBreakEvenData(resetDateStr);
+            
+            const cycle = {
+                id: Date.now(),
+                startDate: resetDateStr,
+                endDate: endDateStr,
+                revenue: data.totalRevenue,
+                target: data.breakEvenValue,
+                reached: data.isReached,
+                progress: data.progress
+            };
+            
+            if (!appState.breakEvenHistory) appState.breakEvenHistory = [];
+            
+            // Evitar duplicatas (se o usuário clicar em resetar duas vezes no mesmo dia por exemplo)
+            const isDuplicate = appState.breakEvenHistory.some(h => h.startDate === cycle.startDate && h.endDate === cycle.endDate);
+            if (isDuplicate) return;
+
+            appState.breakEvenHistory.unshift(cycle);
+            // Manter apenas os últimos 12 ciclos
+            if (appState.breakEvenHistory.length > 12) {
+                appState.breakEvenHistory = appState.breakEvenHistory.slice(0, 12);
+            }
+        }
+
+        function openCycleDetailsModal(cycleId) {
+            const cycle = appState.breakEvenHistory.find(c => c.id === cycleId);
+            if (!cycle) return;
+
+            const data = calculateBreakEvenData(cycle.startDate, cycle.endDate);
+            
+            // Filtrar vendas do período
+            const cycleSales = (appState.sales || []).filter(s => s.date >= cycle.startDate && s.date <= cycle.endDate && s.status === 'completed');
+            
+            // Calcular participação por produto
+            const productShare = {};
+            cycleSales.forEach(s => {
+                (s.items || []).forEach(item => {
+                    if (!productShare[item.name]) productShare[item.name] = 0;
+                    productShare[item.name] += item.total || (item.qty * item.price);
+                });
+            });
+
+            const topProducts = Object.entries(productShare)
+                .map(([name, total]) => ({ name, total, pct: (total / cycle.revenue) * 100 }))
+                .sort((a, b) => b.total - a.total);
+
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <div>
+                            <h3 class="text-xl font-black dark:text-white uppercase tracking-tight">Detalhes do Ciclo</h3>
+                            <p class="text-xs text-slate-500 font-bold uppercase">${formatDate(cycle.startDate)} até ${formatDate(cycle.endDate)}</p>
+                        </div>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                        <!-- Resumo Financeiro -->
+                        <div class="space-y-4">
+                            <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Vendas Totais</p>
+                                <p class="text-xl font-black text-green-600">${formatCurrency(cycle.revenue)}</p>
+                            </div>
+                            <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Meta de Equilíbrio</p>
+                                <p class="text-xl font-black text-slate-900 dark:text-white">${formatCurrency(cycle.target)}</p>
+                            </div>
+                            <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Margem Média</p>
+                                <p class="text-xl font-black text-primary-600">${(data.contributionMarginPct * 100).toFixed(1)}%</p>
+                            </div>
+                        </div>
+
+                        <!-- Gráfico de Pizza -->
+                        <div class="bg-slate-50 dark:bg-slate-700/50 rounded-3xl border border-slate-100 dark:border-slate-700 p-4 flex flex-col items-center justify-center">
+                            <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Composição de Receita</h4>
+                            <div class="w-full h-40">
+                                <canvas id="cycle-detail-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Ranking de Produtos -->
+                    <div class="mb-8">
+                        <h4 class="text-xs font-black text-slate-900 dark:text-white uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <i data-lucide="award" class="w-4 h-4 text-amber-500"></i>
+                            Produtos que mais geraram receita
+                        </h4>
+                        <div class="space-y-3">
+                            ${topProducts.slice(0, 5).map((p, idx) => `
+                                <div class="flex items-center gap-4">
+                                    <span class="text-xs font-black text-slate-300 w-4">${idx + 1}</span>
+                                    <div class="flex-1">
+                                        <div class="flex justify-between items-center mb-1">
+                                            <span class="text-xs font-bold dark:text-white truncate max-w-[150px]">${p.name}</span>
+                                            <span class="text-xs font-black text-slate-900 dark:text-white">${formatCurrency(p.total)}</span>
+                                        </div>
+                                        <div class="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                            <div class="bg-primary-500 h-full" style="width: ${p.pct}%"></div>
+                                        </div>
+                                    </div>
+                                    <span class="text-[10px] font-black text-primary-600 w-10 text-right">${p.pct.toFixed(0)}%</span>
+                                </div>
+                            `).join('') || '<p class="text-center text-slate-400 py-4 text-xs italic">Sem dados de produtos.</p>'}
+                        </div>
+                    </div>
+
+                    <!-- Lista de Vendas -->
+                    <div>
+                        <h4 class="text-xs font-black text-slate-900 dark:text-white uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <i data-lucide="shopping-cart" class="w-4 h-4 text-primary-500"></i>
+                            Vendas do Período
+                        </h4>
+                        <div class="max-h-48 overflow-y-auto custom-scrollbar space-y-2 pr-2">
+                            ${cycleSales.map(s => `
+                                <div class="p-3 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl flex justify-between items-center">
+                                    <div>
+                                        <p class="text-[11px] font-bold dark:text-white">${s.clientName}</p>
+                                        <p class="text-[9px] text-slate-400">${formatDate(s.date)}</p>
+                                    </div>
+                                    <p class="text-xs font-black text-green-600">${formatCurrency(s.total)}</p>
+                                </div>
+                            `).join('') || '<p class="text-center text-slate-400 py-4 text-xs italic">Nenhuma venda encontrada.</p>'}
+                        </div>
+                    </div>
+
+                    <div class="mt-8">
+                        <button onclick="closeModal()" class="w-full py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black text-xs uppercase tracking-widest rounded-2xl hover:opacity-90 transition-all">
+                            Fechar Detalhes
+                        </button>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+
+            // Inicializar gráfico do modal
+            setTimeout(() => {
+                const ctx = document.getElementById('cycle-detail-chart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: topProducts.slice(0, 5).map(p => p.name),
+                        datasets: [{
+                            data: topProducts.slice(0, 5).map(p => p.total),
+                            backgroundColor: ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        cutout: '70%'
+                    }
+                });
+            }, 100);
+        }
+
         /**
          * Gerencia o ciclo de 30 dias do ponto de equilíbrio.
          * Retorna as informações do ciclo atual e realiza o reset automático se necessário.
@@ -731,6 +1005,9 @@
 
             // Reset automático após 30 dias (no 31º dia)
             if (daysElapsed > 30) {
+                // Arquivar o ciclo que está terminando antes de resetar
+                archiveCurrentCycle();
+
                 appState.config.breakEvenResetDate = todayStr;
                 saveData();
                 daysElapsed = 1;
@@ -1067,6 +1344,9 @@
         }
 
         function resetBreakEvenNow() {
+            // Arquivar o ciclo antes de resetar
+            archiveCurrentCycle();
+
             const now = new Date();
             const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
             appState.config.breakEvenResetDate = todayStr;
@@ -1638,34 +1918,17 @@
         function renderDashboardSubTab() {
             // LÓGICA DE DATA DE RESET (Ponto de Equilíbrio)
             const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
+            const data = calculateBreakEvenData(resetDateStr);
 
-            // Recalcular variáveis necessárias para as sub-abas
-            const salariesCosts = (appState.employees || []).reduce((acc, emp) => acc + (emp.salary || 0), 0);
-            const baseFixedCosts = (appState.fixedAccounts || []).reduce((acc, a) => acc + (a.amount || 0), 0) + salariesCosts;
-            
-            // Gastos reais desde o último reset
+            // Gastos reais desde o último reset (apenas para exibição no card)
             const actualExpenses = (appState.transactions || [])
                 .filter(t => t.type === 'saida' && t.date >= resetDateStr)
                 .reduce((acc, t) => acc + (t.amount || 0), 0);
 
-            // Vendas desde o último reset
-            const monthlySales = (appState.sales || []).filter(s => s.date >= resetDateStr && s.status === 'completed');
-            
-            const totalRevenue = monthlySales.reduce((acc, s) => acc + (s.total || 0), 0);
-            const totalVariableCosts = monthlySales.reduce((acc, s) => {
-                const materialsCost = (s.items || []).reduce((itemAcc, item) => {
-                    const product = (appState.inventory || []).find(p => p.id === item.productId);
-                    return itemAcc + (product ? ((product.costPrice || 0) * (item.qty || 0)) : 0);
-                }, 0);
-                return acc + materialsCost + (s.deliveryHelperCostTotal || 0) + (s.fee || 0);
-            }, 0);
-            
-            const contributionMargin = totalRevenue - totalVariableCosts;
-            const contributionMarginPct = totalRevenue > 0 ? (contributionMargin / totalRevenue) : 0.35;
-            
-            const totalBreakEvenNeeded = contributionMarginPct > 0 ? (baseFixedCosts / contributionMarginPct) : baseFixedCosts;
-            const breakEvenProgress = totalBreakEvenNeeded > 0 ? Math.min(100, (totalRevenue / totalBreakEvenNeeded) * 100) : 100;
-            const isBreakEvenReached = totalRevenue >= totalBreakEvenNeeded;
+            const isBreakEvenReached = data.isReached;
+            const breakEvenProgress = data.progress;
+            const totalBreakEvenNeeded = data.breakEvenValue;
+            const totalRevenue = data.totalRevenue;
             const remainingToSell = Math.max(0, totalBreakEvenNeeded - totalRevenue);
 
             const lowStockItems = appState.inventory.filter(p => p.stock <= p.minStock);
@@ -7710,37 +7973,19 @@
             
             // LÓGICA DE DATA DE RESET (Consistente com Dashboard)
             const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
+            const data = calculateBreakEvenData(resetDateStr);
 
-            // Ponto de Equilíbrio Calculations
-            const salariesCosts = (appState.employees || []).reduce((acc, emp) => acc + (emp.salary || 0), 0);
-            const baseFixedCosts = (appState.fixedAccounts || []).reduce((acc, a) => acc + (a.amount || 0), 0) + salariesCosts;
-            
-            // Gastos reais desde o último reset
+            // Gastos reais desde o último reset (apenas para exibição no card)
             const actualExpenses = (appState.transactions || [])
                 .filter(t => t.type === 'saida' && t.date >= resetDateStr)
                 .reduce((acc, t) => acc + (t.amount || 0), 0);
 
-            // Vendas desde o último reset
-            const monthlySales = (appState.sales || []).filter(s => s.date >= resetDateStr && s.status === 'completed');
-            const totalRevenue = monthlySales.reduce((acc, s) => acc + (s.total || 0), 0);
-            
-            const totalVariableCosts = monthlySales.reduce((acc, s) => {
-                const materialsCost = (s.items || []).reduce((itemAcc, item) => {
-                    const product = (appState.inventory || []).find(p => p.id === item.productId);
-                    return itemAcc + (product ? ((product.costPrice || 0) * (item.qty || 0)) : 0);
-                }, 0);
-                return acc + materialsCost + (s.deliveryHelperCostTotal || 0) + (s.fee || 0);
-            }, 0);
-
-            const contributionMargin = totalRevenue - totalVariableCosts;
-            const contributionMarginPct = totalRevenue > 0 ? (contributionMargin / totalRevenue) : 0.35;
-            
-            // Break-even point in Value: Fixed Costs / Contribution Margin %
-            const breakEvenValue = contributionMarginPct > 0 ? (baseFixedCosts / contributionMarginPct) : baseFixedCosts;
-            
-            // Progress towards break-even
-            const breakEvenProgress = breakEvenValue > 0 ? Math.min(100, (totalRevenue / breakEvenValue) * 100) : 100;
-            const isBreakEvenReached = totalRevenue >= breakEvenValue;
+            const isBreakEvenReached = data.isReached;
+            const breakEvenProgress = data.progress;
+            const breakEvenValue = data.breakEvenValue;
+            const totalRevenue = data.totalRevenue;
+            const baseFixedCosts = data.baseFixedCosts;
+            const contributionMarginPct = data.contributionMarginPct;
 
             let html = `
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
@@ -7839,6 +8084,67 @@
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Histórico de Ciclos (Linha do Tempo) -->
+                <div class="mb-8">
+                    <h3 class="text-lg font-bold dark:text-white flex items-center gap-2 mb-4">
+                        <i data-lucide="history" class="w-5 h-5 text-primary-500"></i>
+                        Ciclos Anteriores
+                    </h3>
+                    
+                    ${!appState.breakEvenHistory || appState.breakEvenHistory.length === 0 ? `
+                        <div class="bg-white dark:bg-slate-800 p-8 rounded-3xl border border-dashed border-slate-200 dark:border-slate-700 text-center">
+                            <i data-lucide="clock" class="w-12 h-12 text-slate-300 mx-auto mb-3"></i>
+                            <p class="text-slate-400 font-medium">Nenhum ciclo encerrado ainda.</p>
+                            <p class="text-[10px] text-slate-400 uppercase mt-1">Os dados aparecerão aqui após o primeiro reset do ciclo.</p>
+                        </div>
+                    ` : `
+                        <div class="relative pl-8 space-y-6 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-200 dark:before:bg-slate-700">
+                            ${appState.breakEvenHistory.map(cycle => `
+                                <div class="relative cursor-pointer group" onclick="openCycleDetailsModal(${cycle.id})">
+                                    <!-- Timeline Dot -->
+                                    <div class="absolute -left-[29px] top-1.5 w-6 h-6 rounded-full border-4 border-white dark:border-slate-900 ${cycle.reached ? 'bg-green-500' : 'bg-amber-500'} z-10 group-hover:scale-110 transition-transform"></div>
+                                    
+                                    <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm group-hover:shadow-md group-hover:border-primary-500/50 transition-all">
+                                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                            <div>
+                                                <div class="flex items-center gap-2 mb-1">
+                                                    <span class="text-sm font-black dark:text-white uppercase tracking-tight">
+                                                        Ciclo: ${formatDate(cycle.startDate)} - ${formatDate(cycle.endDate)}
+                                                    </span>
+                                                    <span class="px-2 py-0.5 ${cycle.reached ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'} text-[9px] font-black rounded-full uppercase">
+                                                        ${cycle.reached ? 'Meta Atingida' : 'Abaixo do Equilíbrio'}
+                                                    </span>
+                                                </div>
+                                                <p class="text-xs text-slate-500">Performance final do período de 30 dias.</p>
+                                            </div>
+                                            
+                                            <div class="grid grid-cols-2 sm:grid-cols-3 gap-6 w-full md:w-auto">
+                                                <div>
+                                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-0.5">Vendas</p>
+                                                    <p class="text-sm font-black text-slate-900 dark:text-white">${formatCurrency(cycle.revenue)}</p>
+                                                </div>
+                                                <div>
+                                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-0.5">Meta</p>
+                                                    <p class="text-sm font-black text-slate-900 dark:text-white">${formatCurrency(cycle.target)}</p>
+                                                </div>
+                                                <div class="col-span-2 sm:col-span-1">
+                                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-1">Cobertura</p>
+                                                    <div class="flex items-center gap-2">
+                                                        <div class="flex-1 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden w-20">
+                                                            <div class="${cycle.reached ? 'bg-green-500' : 'bg-amber-500'} h-full" style="width: ${Math.min(100, cycle.progress)}%"></div>
+                                                        </div>
+                                                        <span class="text-xs font-black text-slate-600 dark:text-slate-400">${Math.round(cycle.progress)}%</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
                 </div>
 
                 <div class="mb-6">
@@ -8875,6 +9181,7 @@
                         
                         // Atualiza o estado local com os dados da nuvem
                         appState = cloudData;
+                        reconstructPastCycles();
                         localStorage.setItem('financeProData', JSON.stringify(appState));
                         if (currentUser) renderContent();
                     } else {
@@ -8912,6 +9219,8 @@
             document.getElementById('user-display-role').innerText = currentUser.role;
             document.getElementById('user-avatar').src = currentUser.avatar;
             
+            reconstructPastCycles();
+
             // Apply theme
             const savedTheme = localStorage.getItem('financeProTheme');
             if (savedTheme === 'dark') {
