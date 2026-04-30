@@ -387,6 +387,7 @@
         let db = null;
         let auth = null;
         let firebaseReady = false;
+        let isInitializing = false;
         let cloudSyncEnabled = false; // Só ativa após migração ou se já houver dados na nuvem
 
         try {
@@ -560,6 +561,7 @@
         if (appState.config.addressCity === undefined) appState.config.addressCity = '';
         if (appState.config.addressState === undefined) appState.config.addressState = '';
         if (appState.config.addressCEP === undefined) appState.config.addressCEP = '';
+        if (appState.config.salesGoal === undefined) appState.config.salesGoal = 100000; // Valor padrão de exemplo
         if (appState.config.loginEmail === undefined) appState.config.loginEmail = INITIAL_STATE.config.loginEmail;
         if (appState.config.loginPassword === undefined) appState.config.loginPassword = INITIAL_STATE.config.loginPassword;
         if (appState.config.loginHintText === undefined) appState.config.loginHintText = INITIAL_STATE.config.loginHintText;
@@ -732,64 +734,74 @@
         }
 
         function reconstructPastCycles() {
-            if (appState.breakEvenHistory && appState.breakEvenHistory.length > 0) return;
-            
-            const { resetDateStr } = getBreakEvenConfig();
-            if (!resetDateStr) return;
-
-            // Encontrar a data mais antiga de venda ou transação
-            let allDates = [
-                ...(appState.sales || []).map(s => s.date),
-                ...(appState.transactions || []).map(t => t.date)
-            ].filter(d => d).sort();
-
-            if (allDates.length === 0) return;
-            
-            let earliestDateStr = allDates[0];
-            let currentStart = new Date(resetDateStr);
-            
-            // Retroceder em blocos de 30 dias a partir do resetDateStr atual
-            let history = [];
-            let iterations = 0;
-            const maxIterations = 12; // Limite de 1 ano para reconstrução automática
-
-            while (iterations < maxIterations) {
-                // O fim do ciclo anterior é 1 dia antes do início do ciclo seguinte
-                let cycleEnd = new Date(currentStart);
-                cycleEnd.setDate(cycleEnd.getDate() - 1);
-                let cycleEndStr = cycleEnd.toISOString().split('T')[0];
-
-                // O início do ciclo anterior é 30 dias antes do fim
-                let cycleStart = new Date(cycleEnd);
-                cycleStart.setDate(cycleStart.getDate() - 29);
-                let cycleStartStr = cycleStart.toISOString().split('T')[0];
-
-                // Se o início do ciclo for posterior à data mais antiga, calculamos
-                // Ou se o fim do ciclo for posterior à data mais antiga (para pegar o último ciclo incompleto)
-                if (cycleEndStr < earliestDateStr) break;
-
-                const data = calculateBreakEvenData(cycleStartStr, cycleEndStr);
+            try {
+                if (appState.breakEvenHistory && appState.breakEvenHistory.length > 0) return;
                 
-                // Só adiciona se houver alguma receita ou se for um ciclo completo dentro do período de dados
-                if (data.totalRevenue > 0 || cycleEndStr >= earliestDateStr) {
+                const { resetDateStr } = getBreakEvenConfig();
+                if (!resetDateStr) return;
+
+                // Encontrar a data mais antiga de venda ou transação
+                let allDates = [
+                    ...(appState.sales || []).map(s => s.date),
+                    ...(appState.transactions || []).map(t => t.date)
+                ].filter(d => typeof d === 'string').sort();
+
+                if (allDates.length === 0) return;
+                
+                let earliestDateStr = allDates[0];
+                
+                // Garantir formato YYYY-MM-DD para o Date constructor
+                const [y, m, d] = resetDateStr.split('-').map(Number);
+                let currentStart = new Date(y, m - 1, d);
+                
+                let history = [];
+                let iterations = 0;
+                const maxIterations = 12;
+
+                while (iterations < maxIterations) {
+                    let cycleEnd = new Date(currentStart);
+                    cycleEnd.setDate(cycleEnd.getDate() - 1);
+                    
+                    if (isNaN(cycleEnd.getTime())) break;
+                    
+                    let cycleEndStr = cycleEnd.getFullYear() + '-' + String(cycleEnd.getMonth() + 1).padStart(2, '0') + '-' + String(cycleEnd.getDate()).padStart(2, '0');
+
+                    let cycleStart = new Date(cycleEnd);
+                    cycleStart.setDate(cycleStart.getDate() - 29);
+                    
+                    if (isNaN(cycleStart.getTime())) break;
+                    
+                    let cycleStartStr = cycleStart.getFullYear() + '-' + String(cycleStart.getMonth() + 1).padStart(2, '0') + '-' + String(cycleStart.getDate()).padStart(2, '0');
+
+                    if (cycleEndStr < earliestDateStr) break;
+
+                    const data = calculateBreakEvenData(cycleStartStr, cycleEndStr);
+                    
+                    if (data.totalRevenue > 0 || cycleEndStr >= earliestDateStr) {
+                    const salesGoal = appState.config.salesGoal || 100000;
                     history.push({
                         id: Date.now() - (iterations * 1000),
                         startDate: cycleStartStr,
                         endDate: cycleEndStr,
                         revenue: data.totalRevenue,
                         target: data.breakEvenValue,
+                        salesGoal: salesGoal,
                         reached: data.isReached,
+                        salesGoalReached: data.totalRevenue >= salesGoal,
                         progress: data.progress
                     });
                 }
 
-                currentStart = cycleStart;
-                iterations++;
-            }
+                    currentStart = cycleStart;
+                    iterations++;
+                }
 
-            if (history.length > 0) {
-                appState.breakEvenHistory = history;
-                saveData();
+                if (history.length > 0) {
+                    appState.breakEvenHistory = history;
+                    saveData();
+                }
+            } catch (err) {
+                console.error("Erro ao reconstruir ciclos:", err);
             }
         }
 
@@ -812,7 +824,9 @@
                 endDate: endDateStr,
                 revenue: data.totalRevenue,
                 target: data.breakEvenValue,
+                salesGoal: appState.config.salesGoal || 0,
                 reached: data.isReached,
+                salesGoalReached: data.totalRevenue >= (appState.config.salesGoal || 0),
                 progress: data.progress
             };
             
@@ -1280,11 +1294,6 @@
             if (profileDisplayName) profileDisplayName.innerText = newName;
             
             showToast('Nome atualizado com sucesso!');
-        }
-
-        function switchDashboardTab(subTabId) {
-            dashboardSubTab = subTabId;
-            renderDashboard();
         }
 
         function toggleBalanceVisibility() {
@@ -1919,6 +1928,9 @@
             // LÓGICA DE DATA DE RESET (Ponto de Equilíbrio)
             const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
             const data = calculateBreakEvenData(resetDateStr);
+            const now = new Date();
+            const currentMonth = now.toISOString().substring(0, 7);
+            const todayDay = now.getDate();
 
             // Gastos reais desde o último reset (apenas para exibição no card)
             const actualExpenses = (appState.transactions || [])
@@ -1930,6 +1942,7 @@
             const totalBreakEvenNeeded = data.breakEvenValue;
             const totalRevenue = data.totalRevenue;
             const remainingToSell = Math.max(0, totalBreakEvenNeeded - totalRevenue);
+            const salariesCosts = (appState.employees || []).reduce((acc, emp) => acc + (emp.salary || 0), 0);
 
             const lowStockItems = appState.inventory.filter(p => p.stock <= p.minStock);
             const urgentEquipment = appState.equipment.filter(e => {
@@ -1940,7 +1953,6 @@
             });
 
             // Contas Fixas Urgentes (Atrasadas ou Próximas)
-            const todayDay = new Date().getDate();
             const urgentFixedAccounts = appState.fixedAccounts.filter(acc => {
                 const isPaid = appState.transactions.some(t => t.description.includes(acc.description) && t.date.startsWith(currentMonth));
                 if (isPaid) return false;
@@ -2034,8 +2046,41 @@
                 `;
             } else if (dashboardSubTab === 'financeiro') {
                 const pendingReceivables = appState.sales.filter(s => s.status === 'pending').reduce((acc, s) => acc + s.total, 0);
+                const salesGoal = appState.config.salesGoal || 100000;
+                const salesGoalProgress = Math.min(100, (totalRevenue / salesGoal) * 100);
+                const isSalesGoalReached = totalRevenue >= salesGoal;
+
                 return `
                     <div class="space-y-4">
+                        <!-- Sales Goal Minimalist Card -->
+                        <div class="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-primary-100 dark:border-primary-900/30 shadow-sm relative overflow-hidden">
+                            <div class="flex justify-between items-center mb-4">
+                                <h4 class="text-sm font-bold flex items-center gap-2">
+                                    <i data-lucide="trending-up" class="w-4 h-4 text-primary-600"></i>
+                                    Meta de Faturamento
+                                </h4>
+                                <span class="text-[9px] font-black uppercase ${isSalesGoalReached ? 'text-green-600 bg-green-50' : 'text-primary-600 bg-primary-50'} px-2 py-1 rounded-lg">
+                                    ${isSalesGoalReached ? 'Alcançada' : 'Em andamento'}
+                                </span>
+                            </div>
+                            
+                            <div class="relative h-4 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden mb-3">
+                                <div class="bg-primary-600 h-full transition-all duration-1000" style="width: ${salesGoalProgress}%"></div>
+                                <div class="absolute inset-0 flex items-center justify-center text-[9px] font-black text-white mix-blend-difference">${Math.round(salesGoalProgress)}% DA META</div>
+                            </div>
+
+                            <div class="flex justify-between items-end">
+                                <div>
+                                    <p class="text-[10px] text-slate-400 font-bold uppercase mb-0.5">Objetivo</p>
+                                    <p class="text-lg font-black dark:text-white">${formatCurrency(salesGoal)}</p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="text-[10px] text-slate-400 font-bold uppercase mb-0.5">Faturado</p>
+                                    <p class="text-sm font-bold text-primary-600">${formatCurrency(totalRevenue)}</p>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                             <div class="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm">
                                 <h4 class="text-sm font-bold mb-4 flex items-center gap-2">
@@ -7967,6 +8012,54 @@
         }
 
         // --- GOALS RENDER ---
+        function openEditSalesGoalModal() {
+            const currentGoal = appState.config.salesGoal || 100000;
+            const html = `
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-black dark:text-white uppercase tracking-tight">Definir Meta de Faturamento</h3>
+                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="p-4 bg-primary-50 dark:bg-primary-900/10 rounded-2xl border border-primary-100 dark:border-primary-800/30 mb-6">
+                            <p class="text-xs text-primary-700 dark:text-primary-400 font-bold leading-relaxed">
+                                Defina o objetivo de faturamento bruto para este ciclo de 30 dias. Esta meta ajuda a focar no crescimento além do ponto de equilíbrio.
+                            </p>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Valor da Meta (R$)</label>
+                            <input type="number" id="new-sales-goal" value="${currentGoal}" step="1000"
+                                class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-black text-lg">
+                        </div>
+                    </div>
+                    <div class="mt-8 flex gap-3">
+                        <button onclick="closeModal()" class="flex-1 py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-all">
+                            Cancelar
+                        </button>
+                        <button onclick="saveSalesGoal()" class="flex-1 py-4 bg-primary-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:brightness-95 shadow-lg shadow-primary-500/20 transition-all">
+                            Salvar Meta
+                        </button>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+        }
+
+        function saveSalesGoal() {
+            const newValue = parseFloat(document.getElementById('new-sales-goal').value);
+            if (isNaN(newValue) || newValue <= 0) {
+                showToast('Por favor, insira um valor válido para a meta.', 'error');
+                return;
+            }
+            appState.config.salesGoal = newValue;
+            saveData();
+            closeModal();
+            showToast('Meta de faturamento atualizada!');
+            if (currentTab === 'metas') renderMetas();
+        }
+
         function renderMetas() {
             const now = new Date();
             const currentMonthName = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
@@ -7987,13 +8080,20 @@
             const baseFixedCosts = data.baseFixedCosts;
             const contributionMarginPct = data.contributionMarginPct;
 
+            const salesGoal = appState.config.salesGoal || 100000;
+            const salesGoalProgress = Math.min(100, (totalRevenue / salesGoal) * 100);
+            const isSalesGoalReached = totalRevenue >= salesGoal;
+
             let html = `
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                     <div>
                         <h2 class="text-2xl font-bold dark:text-white">Metas e Sustentabilidade</h2>
-                        <p class="text-slate-500 dark:text-slate-400">Controle de custos e lucratividade da fábrica</p>
+                        <p class="text-slate-500 dark:text-slate-400">Controle de faturamento e lucro da fábrica</p>
                     </div>
                     <div class="flex gap-2">
+                        <button onclick="openEditSalesGoalModal()" class="bg-white dark:bg-slate-800 border border-primary-200 dark:border-primary-900/30 text-primary-600 px-4 py-2 rounded-xl flex items-center gap-2 font-bold text-sm hover:bg-primary-50 transition-all">
+                            <i data-lucide="edit-3" class="w-4 h-4"></i> Ajustar Meta
+                        </button>
                         <button onclick="confirmResetBreakEven()" class="bg-white dark:bg-slate-800 border border-red-200 dark:border-red-900/30 text-red-600 px-4 py-2 rounded-xl flex items-center gap-2 font-bold text-sm hover:bg-red-50 transition-all">
                             <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reiniciar Ciclo
                         </button>
@@ -8003,87 +8103,78 @@
                     </div>
                 </div>
 
-                <!-- Ponto de Equilíbrio Card Redesenhado -->
-                <div class="mb-8 bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden animate-fade-in">
-                    <div class="p-6 border-b border-slate-100 dark:border-slate-700 bg-slate-50/30 dark:bg-slate-700/10 flex justify-between items-center">
-                        <h3 class="font-bold dark:text-white flex items-center gap-2">
-                            <i data-lucide="scale" class="w-5 h-5 text-primary-500"></i>
-                            Análise de Equilíbrio - ${currentMonthName}
-                        </h3>
-                        <span class="px-3 py-1 ${isBreakEvenReached ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'} text-[10px] font-black rounded-full uppercase">
-                            ${isBreakEvenReached ? 'Operação Lucrativa' : 'Em Busca do Equilíbrio'}
-                        </span>
-                    </div>
-                    
-                    <div class="p-6">
-                        <div class="mb-4 flex flex-wrap items-center gap-3">
-                            <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ciclo atual</span>
-                            <span class="text-xs font-black text-primary-600">Dia ${daysElapsed} / 30</span>
-                            <div class="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden w-32">
-                                <div class="bg-primary-500 h-full" style="width: ${Math.min(100, (daysElapsed / 30) * 100)}%"></div>
-                            </div>
-                            <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-auto">Reset em: <span class="text-slate-900 dark:text-white">${formatDate(endDateStr)}</span></span>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                    <!-- Ponto de Equilíbrio Card -->
+                    <div class="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden animate-fade-in">
+                        <div class="p-6 border-b border-slate-100 dark:border-slate-700 bg-slate-50/30 dark:bg-slate-700/10 flex justify-between items-center">
+                            <h3 class="font-bold dark:text-white flex items-center gap-2">
+                                <i data-lucide="scale" class="w-5 h-5 text-primary-500"></i>
+                                Ponto de Equilíbrio
+                            </h3>
+                            <span class="px-3 py-1 ${isBreakEvenReached ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'} text-[10px] font-black rounded-full uppercase">
+                                ${isBreakEvenReached ? 'Coberto' : 'Pendente'}
+                            </span>
                         </div>
-                        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                            <!-- Circular Progress -->
-                            <div class="flex flex-col items-center justify-center lg:border-r border-slate-100 dark:border-slate-700 pr-6">
-                                <div class="relative w-32 h-32 mb-4">
-                                    <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
-                                        <circle cx="18" cy="18" r="16" fill="none" class="stroke-slate-100 dark:stroke-slate-700" stroke-width="3"></circle>
-                                        <circle cx="18" cy="18" r="16" fill="none" class="${isBreakEvenReached ? 'stroke-green-500' : 'stroke-primary-500'}" stroke-width="3" stroke-dasharray="${breakEvenProgress} 100" stroke-linecap="round"></circle>
-                                    </svg>
-                                    <div class="absolute inset-0 flex flex-col items-center justify-center">
-                                        <span class="text-2xl font-black dark:text-white">${Math.round(breakEvenProgress)}%</span>
-                                    </div>
-                                </div>
-                                <p class="text-xs font-bold text-slate-500 uppercase">Cobertura Total</p>
-                            </div>
-
-                            <!-- Financial Summary -->
-                            <div class="lg:col-span-3 grid grid-cols-2 md:grid-cols-4 gap-4">
-                                <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
-                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-1">Custo Fixo Total</p>
-                                    <p class="text-sm font-black text-red-500">${formatCurrency(baseFixedCosts)}</p>
-                                    <p class="text-[9px] text-slate-400 mt-1 italic">(Inclui Salários)</p>
-                                </div>
-                                <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
-                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-1">Já Pago no Mês</p>
-                                    <p class="text-sm font-black text-blue-600">${formatCurrency(actualExpenses)}</p>
-                                    <p class="text-[9px] text-slate-400 mt-1 italic">(Saídas de Caixa)</p>
-                                </div>
-                                <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
-                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-1">Vendas (Líquidas)</p>
-                                    <p class="text-sm font-black text-green-600">${formatCurrency(totalRevenue)}</p>
-                                    <p class="text-[9px] text-slate-400 mt-1 italic">(Vendas Concluídas)</p>
-                                </div>
-                                <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
-                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-1">Meta para Lucrar</p>
-                                    <p class="text-sm font-black text-slate-900 dark:text-white">${formatCurrency(breakEvenValue)}</p>
-                                    <p class="text-[9px] text-slate-400 mt-1 italic">(Baseado na margem)</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Progress Insight -->
-                        <div class="mt-8 p-4 bg-primary-50 dark:bg-primary-900/10 rounded-2xl border border-primary-100 dark:border-primary-800/30">
-                            <div class="flex flex-col md:flex-row justify-between items-center gap-4">
-                                <div class="flex items-center gap-3">
-                                    <div class="w-10 h-10 bg-white dark:bg-slate-800 rounded-full flex items-center justify-center text-primary-600 shadow-sm">
-                                        <i data-lucide="trending-up" class="w-5 h-5"></i>
-                                    </div>
-                                    <div>
-                                        <p class="text-sm font-bold dark:text-white">
-                                            ${isBreakEvenReached ? 'Parabéns! A fábrica já cobriu todos os custos e está gerando lucro.' : `Faltam vender <b>${formatCurrency(breakEvenValue - totalRevenue)}</b> para atingir o equilíbrio.`}
-                                        </p>
-                                        <p class="text-xs text-slate-500">Cada venda agora contribui com aproximadamente ${(contributionMarginPct * 100).toFixed(0)}% para o pagamento dos custos fixos.</p>
-                                    </div>
+                        <div class="p-6">
+                            <div class="flex items-center justify-between mb-4">
+                                <div>
+                                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Mínimo Necessário</p>
+                                    <p class="text-xl font-black dark:text-white">${formatCurrency(breakEvenValue)}</p>
                                 </div>
                                 <div class="text-right">
-                                    <span class="text-xs font-black text-primary-600 uppercase tracking-widest">${Math.round(breakEvenProgress)}% Completo</span>
+                                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Status Atual</p>
+                                    <p class="text-sm font-black ${isBreakEvenReached ? 'text-green-600' : 'text-primary-600'}">${Math.round(breakEvenProgress)}%</p>
                                 </div>
                             </div>
+                            <div class="h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden mb-4">
+                                <div class="${isBreakEvenReached ? 'bg-green-500' : 'bg-primary-500'} h-full transition-all duration-1000" style="width: ${breakEvenProgress}%"></div>
+                            </div>
+                            <p class="text-xs text-slate-500 leading-relaxed">
+                                ${isBreakEvenReached ? 'A fábrica já cobriu os custos fixos.' : `Faltam vender <b>${formatCurrency(breakEvenValue - totalRevenue)}</b> para atingir o equilíbrio.`}
+                            </p>
                         </div>
                     </div>
+
+                    <!-- Meta de Faturamento Card -->
+                    <div class="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden animate-fade-in">
+                        <div class="p-6 border-b border-slate-100 dark:border-slate-700 bg-primary-50/30 dark:bg-primary-900/10 flex justify-between items-center">
+                            <h3 class="font-bold dark:text-white flex items-center gap-2">
+                                <i data-lucide="trending-up" class="w-5 h-5 text-primary-600"></i>
+                                Meta de Faturamento
+                            </h3>
+                            <span class="px-3 py-1 ${isSalesGoalReached ? 'bg-green-100 text-green-700' : 'bg-primary-100 text-primary-700'} text-[10px] font-black rounded-full uppercase">
+                                ${isSalesGoalReached ? 'Alcançada' : 'Em Busca'}
+                            </span>
+                        </div>
+                        <div class="p-6">
+                            <div class="flex items-center justify-between mb-4">
+                                <div>
+                                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Objetivo do Mês</p>
+                                    <p class="text-xl font-black dark:text-white">${formatCurrency(salesGoal)}</p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Status Atual</p>
+                                    <p class="text-sm font-black text-primary-600">${Math.round(salesGoalProgress)}%</p>
+                                </div>
+                            </div>
+                            <div class="h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden mb-4">
+                                <div class="bg-primary-600 h-full transition-all duration-1000" style="width: ${salesGoalProgress}%"></div>
+                            </div>
+                            <p class="text-xs text-slate-500 leading-relaxed">
+                                ${isSalesGoalReached ? 'Excelente! Meta de faturamento atingida.' : `Faltam <b>${formatCurrency(salesGoal - totalRevenue)}</b> para bater a meta de faturamento.`}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Ciclo Info -->
+                <div class="mb-8 flex flex-wrap items-center gap-3 bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm">
+                    <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ciclo atual: ${currentMonthName}</span>
+                    <span class="text-xs font-black text-primary-600">Dia ${daysElapsed} / 30</span>
+                    <div class="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden w-32">
+                        <div class="bg-primary-500 h-full" style="width: ${Math.min(100, (daysElapsed / 30) * 100)}%"></div>
+                    </div>
+                    <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-auto">Reset em: <span class="text-slate-900 dark:text-white">${formatDate(endDateStr)}</span></span>
                 </div>
 
                 <!-- Histórico de Ciclos (Linha do Tempo) -->
@@ -8104,7 +8195,7 @@
                             ${appState.breakEvenHistory.map(cycle => `
                                 <div class="relative cursor-pointer group" onclick="openCycleDetailsModal(${cycle.id})">
                                     <!-- Timeline Dot -->
-                                    <div class="absolute -left-[29px] top-1.5 w-6 h-6 rounded-full border-4 border-white dark:border-slate-900 ${cycle.reached ? 'bg-green-500' : 'bg-amber-500'} z-10 group-hover:scale-110 transition-transform"></div>
+                                    <div class="absolute -left-[29px] top-1.5 w-6 h-6 rounded-full border-4 border-white dark:border-slate-900 ${cycle.salesGoalReached ? 'bg-primary-600' : (cycle.reached ? 'bg-green-500' : 'bg-amber-500')} z-10 group-hover:scale-110 transition-transform"></div>
                                     
                                     <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm group-hover:shadow-md group-hover:border-primary-500/50 transition-all">
                                         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -8113,30 +8204,23 @@
                                                     <span class="text-sm font-black dark:text-white uppercase tracking-tight">
                                                         Ciclo: ${formatDate(cycle.startDate)} - ${formatDate(cycle.endDate)}
                                                     </span>
-                                                    <span class="px-2 py-0.5 ${cycle.reached ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'} text-[9px] font-black rounded-full uppercase">
-                                                        ${cycle.reached ? 'Meta Atingida' : 'Abaixo do Equilíbrio'}
+                                                    <span class="px-2 py-0.5 ${cycle.salesGoalReached ? 'bg-primary-100 text-primary-700' : (cycle.reached ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700')} text-[9px] font-black rounded-full uppercase">
+                                                        ${cycle.salesGoalReached ? 'Meta Batida' : (cycle.reached ? 'Ponto Equilíbrio' : 'Abaixo')}
                                                     </span>
                                                 </div>
-                                                <p class="text-xs text-slate-500">Performance final do período de 30 dias.</p>
+                                                <p class="text-xs text-slate-500">Faturamento final: <b>${formatCurrency(cycle.revenue)}</b></p>
                                             </div>
                                             
-                                            <div class="grid grid-cols-2 sm:grid-cols-3 gap-6 w-full md:w-auto">
+                                            <div class="grid grid-cols-2 sm:grid-cols-2 gap-6 w-full md:w-auto">
                                                 <div>
-                                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-0.5">Vendas</p>
-                                                    <p class="text-sm font-black text-slate-900 dark:text-white">${formatCurrency(cycle.revenue)}</p>
+                                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-0.5">Equilíbrio</p>
+                                                    <p class="text-sm font-black ${cycle.reached ? 'text-green-600' : 'text-amber-600'}">${Math.round(cycle.progress)}%</p>
                                                 </div>
                                                 <div>
-                                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-0.5">Meta</p>
-                                                    <p class="text-sm font-black text-slate-900 dark:text-white">${formatCurrency(cycle.target)}</p>
-                                                </div>
-                                                <div class="col-span-2 sm:col-span-1">
-                                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-1">Cobertura</p>
-                                                    <div class="flex items-center gap-2">
-                                                        <div class="flex-1 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden w-20">
-                                                            <div class="${cycle.reached ? 'bg-green-500' : 'bg-amber-500'} h-full" style="width: ${Math.min(100, cycle.progress)}%"></div>
-                                                        </div>
-                                                        <span class="text-xs font-black text-slate-600 dark:text-slate-400">${Math.round(cycle.progress)}%</span>
-                                                    </div>
+                                                    <p class="text-[10px] font-bold text-slate-400 uppercase mb-0.5">Meta Faturamento</p>
+                                                    <p class="text-sm font-black ${cycle.salesGoalReached ? 'text-primary-600' : 'text-slate-400'}">
+                                                        ${Math.round((cycle.revenue / (cycle.salesGoal || 100000)) * 100)}%
+                                                    </p>
                                                 </div>
                                             </div>
                                         </div>
@@ -9168,7 +9252,8 @@
 
         // --- APP INITIALIZATION ---
         function initApp() {
-            if (!currentUser) return;
+            if (!currentUser || isInitializing) return;
+            isInitializing = true;
 
             // --- Lógica do Firebase com Ambientes ---
             if (firebaseReady && db) {
@@ -9181,9 +9266,12 @@
                         
                         // Atualiza o estado local com os dados da nuvem
                         appState = cloudData;
-                        reconstructPastCycles();
                         localStorage.setItem('financeProData', JSON.stringify(appState));
-                        if (currentUser) renderContent();
+                        if (currentUser) {
+                            renderContent();
+                            // Tenta reconstruir apenas se necessário e após a primeira renderização
+                            setTimeout(reconstructPastCycles, 1000);
+                        }
                     } else {
                         // Se não existe na nuvem, o sincronismo fica desativado
                         // Isso protege os dados locais de serem sobrescritos por um documento vazio
@@ -9219,7 +9307,8 @@
             document.getElementById('user-display-role').innerText = currentUser.role;
             document.getElementById('user-avatar').src = currentUser.avatar;
             
-            reconstructPastCycles();
+            // Reconstrução em segundo plano para não travar o carregamento inicial
+            setTimeout(reconstructPastCycles, 1500);
 
             // Apply theme
             const savedTheme = localStorage.getItem('financeProTheme');
