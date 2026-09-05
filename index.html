@@ -9250,7 +9250,6 @@
                         // Isso protege os dados locais de serem sobrescritos por um documento vazio
                         cloudSyncEnabled = false;
                         if (!pendingCloudSave) cloudBaseline = null;
-                        setSaveStatus('Dados disponíveis apenas neste aparelho. Nuvem sem dados.', true);
                         console.log(`Ambiente ${currentEnv} aguardando migração ou novos dados.`);
                     }
                 }, (err) => {
