@@ -18,6 +18,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="App Fábrica">
     <link rel="apple-touch-icon" href="app-icon.svg">
+    <script src="app-safety.js"></script>
     <!-- Tailwind CSS v3 via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Chart.js via CDN -->
@@ -219,7 +220,7 @@
                     <label class="block text-sm font-medium mb-2">E-mail</label>
                     <div class="relative">
                         <i data-lucide="mail" class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400"></i>
-                        <input type="email" id="login-email" required placeholder="admin@empresa.com" 
+                        <input type="email" id="login-email" required autocomplete="username" placeholder="Seu e-mail"
                             class="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none transition-all">
                     </div>
                 </div>
@@ -227,7 +228,7 @@
                     <label class="block text-sm font-medium mb-2">Senha</label>
                     <div class="relative">
                         <i data-lucide="lock" class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400"></i>
-                        <input type="password" id="login-password" required placeholder="123456"
+                        <input type="password" id="login-password" required autocomplete="current-password" placeholder="Sua senha"
                             class="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none transition-all">
                     </div>
                 </div>
@@ -235,6 +236,7 @@
                     Entrar
                 </button>
             </form>
+            <button type="button" onclick="requestPasswordReset()" class="w-full mt-4 text-sm text-primary-600">Esqueci minha senha</button>
             <div class="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700 text-center">
                 <p id="login-hint" class="text-xs text-slate-400"></p>
             </div>
@@ -380,7 +382,14 @@
         }
 
         // Prioridade: 1. Parâmetro na URL (?env=prod ou ?env=test) / 2. Padrão detectado
-        const currentEnv = urlParams.get('env') || defaultEnv;
+        const currentEnv = ['prod', 'test'].includes(urlParams.get('env')) ? urlParams.get('env') : defaultEnv;
+        const dataStorageKey = 'financeProData-' + currentEnv;
+        try {
+            if (!localStorage.getItem(dataStorageKey) && localStorage.getItem('financeProData') && !localStorage.getItem('financeProLegacyAssigned')) {
+                localStorage.setItem(dataStorageKey, localStorage.getItem('financeProData'));
+                localStorage.setItem('financeProLegacyAssigned', currentEnv);
+            }
+        } catch (_) {}
         const dbDocName = currentEnv === 'test' ? 'globalState_test' : 'globalState_prod';
 
         // Inicializar Firebase
@@ -388,6 +397,17 @@
         let auth = null;
         let firebaseReady = false;
         let isInitializing = false;
+        let cloudUnsubscribe = null;
+        let cloudBaseline = undefined;
+        let pendingCloudSave = false;
+        let syncRunning = false;
+        let syncPromise = Promise.resolve(false);
+        const pendingKey = 'financeProPending-' + currentEnv;
+        try {
+            const pending = JSON.parse(localStorage.getItem(pendingKey) || 'null');
+            if (pending) { cloudBaseline = pending.baseline; pendingCloudSave = true; }
+        } catch (_) {}
+
         let cloudSyncEnabled = false; // Só ativa após migração ou se já houver dados na nuvem
 
         try {
@@ -406,11 +426,6 @@
         }
 
         // --- CONSTANTS & INITIAL DATA ---
-        const DEMO_USERS = [
-            { email: 'admin@empresa.com', password: '123456', name: 'Admin', role: 'Administrador', avatar: 'https://ui-avatars.com/api/?name=Admin&background=0ea5e9&color=fff' },
-            { email: 'funcionario@empresa.com', password: '123456', name: 'João Silva', role: 'Vendedor', avatar: 'https://ui-avatars.com/api/?name=Joao+Silva&background=10b981&color=fff' }
-        ];
-
         const INITIAL_STATE = {
             config: {
                 companyName: 'Fábrica de Pré-moldados Pro',
@@ -426,7 +441,6 @@
                 logo: '',
                 showBalance: false,
                 loginEmail: 'admin@empresa.com',
-                loginPassword: '123456',
                 loginHintText: 'Entre com o acesso configurado pela empresa.',
                 categories: ['Matéria-Prima', 'Ferragens', 'Produtos Acabados', 'Insumos / Aditivos', 'Equipamentos / EPIs', 'Manutenção', 'Outros'],
                 expenseCategories: ['Compra de Matéria-Prima', 'Compra de Ferragens', 'Manutenção de Máquinas', 'Energia Elétrica', 'Salários / Encargos', 'Impostos', 'Fretes / Combustível', 'Taxas de Cartão', 'Pagamento de Ajudante'],
@@ -517,7 +531,6 @@
                     showBalance: false,
                     breakEvenResetDate: null,
                     loginEmail: INITIAL_STATE.config.loginEmail,
-                    loginPassword: INITIAL_STATE.config.loginPassword,
                     loginHintText: INITIAL_STATE.config.loginHintText,
                     categories: INITIAL_STATE.config.categories.slice(),
                     expenseCategories: INITIAL_STATE.config.expenseCategories.slice(),
@@ -543,7 +556,7 @@
         // --- APP STATE ---
         let appState = INITIAL_STATE;
         try {
-            const raw = localStorage.getItem('financeProData');
+            const raw = localStorage.getItem(dataStorageKey);
             if (raw) appState = JSON.parse(raw);
         } catch (_) {
             appState = INITIAL_STATE;
@@ -563,7 +576,6 @@
         if (appState.config.addressCEP === undefined) appState.config.addressCEP = '';
         if (appState.config.salesGoal === undefined) appState.config.salesGoal = 100000; // Valor padrão de exemplo
         if (appState.config.loginEmail === undefined) appState.config.loginEmail = INITIAL_STATE.config.loginEmail;
-        if (appState.config.loginPassword === undefined) appState.config.loginPassword = INITIAL_STATE.config.loginPassword;
         if (appState.config.loginHintText === undefined) appState.config.loginHintText = INITIAL_STATE.config.loginHintText;
         if (!Array.isArray(appState.inventory)) appState.inventory = [];
         if (!Array.isArray(appState.transactions)) appState.transactions = [];
@@ -618,16 +630,9 @@
         });
 
         let currentUser = null;
-        try {
-            const rawUser = localStorage.getItem('financeProUser');
-            if (rawUser) currentUser = JSON.parse(rawUser);
-        } catch (_) {
-            try {
-                localStorage.removeItem('financeProUser');
-            } catch (_) {
-            }
-            currentUser = null;
-        }
+        try { localStorage.removeItem('financeProUser'); } catch (_) {}
+        // Legacy passwords are never used or included in new backups/sync writes.
+        if (appState.config) delete appState.config.loginPassword;
         let currentTab = 'dashboard';
         let dashboardSubTab = 'geral';
         let vendasSubTab = 'home';
@@ -638,6 +643,7 @@
         let pdvPayments = [];
 
         // --- UTILS ---
+        const { localDate, escapeHtml, canonical, validateBackup } = AppSafety;
         const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
         const formatDate = (dateStr) => {
             if (!dateStr) return '';
@@ -675,28 +681,75 @@
             return parts.join(' • ');
         }
 
-        function saveData() {
-            // Salvar localmente como fallback imediato - SEMPRE salvar localmente
-            try {
-                localStorage.setItem('financeProData', JSON.stringify(appState));
-            } catch (_) {
-                console.warn("Erro ao salvar no localStorage");
+        function setSaveStatus(message, error = false) {
+            let banner = document.getElementById('save-status');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'save-status';
+                banner.setAttribute('role', 'status');
+                banner.style.cssText = 'position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:99999;padding:10px 16px;border-radius:12px;max-width:90vw;font:13px sans-serif;box-shadow:0 2px 12px #0003';
+                document.body.appendChild(banner);
             }
-
-            // Se for PC e estiver em produção, o bloqueio é apenas para o Cloud Sync automático
-            if (isPC && currentEnv === 'prod' && !cloudSyncEnabled) {
-                // Não bloqueamos o localStorage, apenas avisamos que não vai para a nuvem
-                return;
-            }
-
-            // Salvar no Firebase se configurado e habilitado
-            if (firebaseReady && db && cloudSyncEnabled) {
-                db.collection('appData').doc(dbDocName).set(appState)
-                    .catch(err => {
-                        console.error("Erro ao sincronizar com Firebase:", err);
-                    });
-            }
+            banner.textContent = message;
+            banner.style.background = error ? '#991b1b' : '#0f172a';
+            banner.style.color = '#fff';
         }
+
+        function saveData() {
+            if (appState.config) delete appState.config.loginPassword;
+            try {
+                // Persist the pending marker first: a reload must not silently discard local edits.
+                localStorage.setItem(pendingKey, JSON.stringify({ baseline: cloudBaseline ?? null }));
+                localStorage.setItem(dataStorageKey, JSON.stringify(appState));
+                pendingCloudSave = true;
+            } catch (err) {
+                pendingCloudSave = true;
+                setSaveStatus('Não foi possível salvar neste aparelho. Exporte um backup antes de fechar o app.', true);
+                return Promise.resolve(false);
+            }
+            if (!firebaseReady || !db || !cloudSyncEnabled) {
+                setSaveStatus('Salvo neste aparelho. Sincronização com a nuvem indisponível.', true);
+                return Promise.resolve(false);
+            }
+            return syncLocalChanges();
+        }
+
+        function syncLocalChanges() {
+            if (syncRunning) return syncPromise;
+            syncRunning = true;
+            syncPromise = (async () => {
+                try {
+                    while (pendingCloudSave) {
+                        if (cloudBaseline === undefined) throw new Error('Aguarde a leitura da nuvem antes de sincronizar.');
+                        const snapshot = JSON.parse(JSON.stringify(appState));
+                        const expected = cloudBaseline;
+                        const ref = db.collection('appData').doc(dbDocName);
+                        setSaveStatus('Salvo neste aparelho. Sincronizando...');
+                        await db.runTransaction(async transaction => {
+                            const remote = await transaction.get(ref);
+                            const actual = remote.exists ? canonical(remote.data()) : null;
+                            if (actual === canonical(snapshot)) return;
+                            if (actual !== expected) throw new Error('Há alterações em outro aparelho. Seus dados locais foram preservados. Exporte um backup para conciliar as versões.');
+                            transaction.set(ref, snapshot);
+                        });
+                        cloudBaseline = canonical(snapshot);
+                        pendingCloudSave = canonical(appState) !== cloudBaseline;
+                        if (pendingCloudSave) localStorage.setItem(pendingKey, JSON.stringify({ baseline: cloudBaseline }));
+                        else localStorage.removeItem(pendingKey);
+                    }
+                    setSaveStatus('Salvo neste aparelho e na nuvem.');
+                    return true;
+                } catch (err) {
+                    setSaveStatus('Salvo apenas neste aparelho. ' + (err.message || 'Verifique sua conexão.'), true);
+                    return false;
+                } finally { syncRunning = false; }
+            })();
+            return syncPromise;
+        }
+
+        window.addEventListener('online', () => {
+            if (currentUser && pendingCloudSave && cloudSyncEnabled) syncLocalChanges();
+        });
 
         function calculateBreakEvenData(resetDateStr, endDateStr = null) {
             const salariesCosts = (appState.employees || []).reduce((acc, emp) => acc + (emp.salary || 0), 0);
@@ -1059,7 +1112,7 @@
             const icon = type === 'success' ? 'check-circle' : 'alert-circle';
             
             toast.className = `${bgColor} text-white px-6 py-3 rounded-xl shadow-xl flex items-center gap-3 animate-slide-in mb-3`;
-            toast.innerHTML = `<i data-lucide="${icon}" class="w-5 h-5"></i> <span class="font-medium">${message}</span>`;
+            toast.innerHTML = `<i data-lucide="${icon}" class="w-5 h-5"></i> <span class="font-medium">${escapeHtml(message)}</span>`;
             
             container.appendChild(toast);
             try {
@@ -1106,58 +1159,76 @@
 
         // --- AUTH ---
         const loginForm = document.getElementById('login-form');
-        loginForm.onsubmit = (e) => {
+        loginForm.onsubmit = async (e) => {
             e.preventDefault();
             setLoginError('');
+            const button = loginForm.querySelector('button[type="submit"]');
+            button.disabled = true;
             try {
-                const email = (document.getElementById('login-email').value || '').trim().toLowerCase();
-                const password = (document.getElementById('login-password').value || '').trim();
-                
-                let user = null;
-                const confEmail = String(appState?.config?.loginEmail || '').trim().toLowerCase();
-                const confPass = String(appState?.config?.loginPassword || '').trim();
-                if (confEmail && confPass) {
-                    if (email === confEmail && password === confPass) {
-                        user = {
-                            email: appState.config.loginEmail,
-                            password: appState.config.loginPassword,
-                            name: 'Admin',
-                            role: 'Administrador',
-                            avatar: 'https://ui-avatars.com/api/?name=Admin&background=0ea5e9&color=fff'
-                        };
-                    }
-                } else {
-                    user = DEMO_USERS.find(u => String(u.email).toLowerCase() === email && u.password === password) || null;
-                }
-                if (user) {
-                    currentUser = user;
-                    try {
-                        localStorage.setItem('financeProUser', JSON.stringify(user));
-                    } catch (_) {
-                    }
-                    try {
-                        initApp();
-                    } catch (err) {
-                        setLoginError('Falha ao iniciar o app. Recarregue a página.');
-                        return;
-                    }
-                    showToast(`Bem-vindo, ${user.name}!`);
-                } else {
-                    showToast('E-mail ou senha incorretos.', 'error');
-                }
+                if (!auth) throw new Error('Verifique sua conexão e recarregue o app.');
+                const email = document.getElementById('login-email').value.trim();
+                const password = document.getElementById('login-password').value;
+                await auth.signInWithEmailAndPassword(email, password);
+                document.getElementById('login-password').value = '';
             } catch (err) {
-                showToast('Erro ao entrar. Recarregue a página.', 'error');
-            }
+                setLoginError(err.code === 'auth/network-request-failed'
+                    ? 'Sem conexão. Conecte-se à internet para entrar.'
+                    : 'Não foi possível entrar. Confira seu e-mail e sua senha.');
+            } finally { button.disabled = false; }
         };
 
-        function logout() {
+        async function requestPasswordReset() {
+            const email = (currentUser?.email || document.getElementById('login-email').value).trim();
+            if (!email || !auth) { setLoginError('Informe seu e-mail para recuperar a senha.'); return; }
+            if (!confirm('Enviar instruções de recuperação de senha para ' + email + '?')) return;
+            try {
+                await auth.sendPasswordResetEmail(email);
+                showToast('Se o e-mail estiver cadastrado, você receberá as instruções.');
+            } catch (_) { showToast('Não foi possível solicitar a recuperação. Tente novamente.', 'error'); }
+        }
+
+        function resetSessionUI() {
             currentUser = null;
-            localStorage.removeItem('financeProUser');
+            isInitializing = false;
+            if (cloudUnsubscribe) cloudUnsubscribe();
+            cloudUnsubscribe = null;
+            cloudSyncEnabled = false;
+            currentCart = [];
+            pdvClient = null;
+            pdvDiscount = 0;
+            pdvPayments = [];
+            closeModal();
             document.getElementById('main-app').classList.add('hidden');
             document.getElementById('login-screen').classList.remove('hidden');
-            updateLoginHint();
+            document.getElementById('login-password').value = '';
         }
-        
+
+        async function logout() {
+            if (pendingCloudSave && !confirm('Há dados salvos apenas neste aparelho. Eles serão preservados para sincronizar no próximo acesso. Sair?')) return;
+            try {
+                if (syncRunning) await syncPromise;
+                if (auth) await auth.signOut();
+                resetSessionUI();
+            } catch (_) { showToast('Não foi possível sair. Tente novamente.', 'error'); }
+        }
+
+        async function handleAuthState(user) {
+            if (!user) { resetSessionUI(); return; }
+            try {
+                // Rules enforce the permitted owner on the server before showing cached data.
+                await db.collection('appData').doc(dbDocName).get({ source: 'server' });
+                if (!auth.currentUser || auth.currentUser.uid !== user.uid) return;
+                currentUser = { uid: user.uid, email: user.email, name: user.displayName || 'Admin', role: 'Administrador', avatar: 'app-icon.svg' };
+                initApp();
+            } catch (err) {
+                resetSessionUI();
+                await auth.signOut();
+                setLoginError(err.code === 'permission-denied'
+                    ? 'Esta conta ainda não está autorizada. Confira a configuração de acesso no Firebase.'
+                    : 'Não foi possível verificar seu acesso. Confira a conexão e tente novamente.');
+            }
+        }
+
         function openProfileModal() {
             const name = currentUser?.name || 'Usuário';
             const role = currentUser?.role || '';
@@ -1301,7 +1372,7 @@
             
             // Salvar apenas localmente para ser instantâneo e não causar re-renderização pelo Firebase
             try {
-                localStorage.setItem('financeProData', JSON.stringify(appState));
+                localStorage.setItem(dataStorageKey, JSON.stringify(appState));
             } catch (_) {}
 
             if (currentTab === 'dashboard') {
@@ -1310,7 +1381,7 @@
                 // Atualiza os valores na tela sem renderizar o dashboard inteiro
                 const balance = appState.transactions.reduce((acc, t) => acc + (t.type === 'entrada' ? t.amount : -t.amount), 0);
                 const now = new Date();
-                const todayStr = now.toISOString().split('T')[0];
+                const todayStr = localDate(now);
                 const currentMonth = todayStr.substring(0, 7);
                 const monthlyIn = appState.transactions.filter(t => t.type === 'entrada' && t.date.startsWith(currentMonth)).reduce((acc, t) => acc + t.amount, 0);
                 const monthlyOut = appState.transactions.filter(t => t.type === 'saida' && t.date.startsWith(currentMonth)).reduce((acc, t) => acc + t.amount, 0);
@@ -1671,7 +1742,7 @@
                             </div>
                             <div>
                                 <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Data da Produção</label>
-                                <input type="date" id="prod-date" required value="${new Date().toISOString().split('T')[0]}" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm">
+                                <input type="date" id="prod-date" required value="${localDate()}" class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm">
                             </div>
                         </div>
                         
@@ -1743,6 +1814,15 @@
                     return;
                 }
 
+                if (!Number.isInteger(qty) || qty <= 0 || !Array.isArray(product.recipe) || !product.recipe.length) {
+                    showToast('Informe uma quantidade válida e cadastre a receita do produto.', 'error');
+                    return;
+                }
+                if (product.recipe.some(item => !appState.inventory.some(m => m.id === item.productId) || !Number.isFinite(item.qty) || item.qty <= 0)) {
+                    showToast('A receita contém um material ausente ou uma quantidade inválida.', 'error');
+                    return;
+                }
+
                 // Check stock for all materials first
                 let stockOk = true;
                 product.recipe.forEach(item => {
@@ -1799,7 +1879,7 @@
         // --- DASHBOARD RENDER ---
         function renderDashboard() {
             const now = new Date();
-            const todayStr = now.toISOString().split('T')[0];
+            const todayStr = localDate(now);
             const currentMonth = todayStr.substring(0, 7);
 
             const balance = appState.transactions.reduce((acc, t) => acc + (t.type === 'entrada' ? t.amount : -t.amount), 0);
@@ -1929,7 +2009,7 @@
             const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
             const data = calculateBreakEvenData(resetDateStr);
             const now = new Date();
-            const currentMonth = now.toISOString().substring(0, 7);
+            const currentMonth = localDate(now).slice(0, 7);
             const todayDay = now.getDate();
 
             // Gastos reais desde o último reset (apenas para exibição no card)
@@ -2312,7 +2392,7 @@
                 const now = new Date();
                 for (let i = 5; i >= 0; i--) {
                     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                    const monthStr = d.toISOString().substring(0, 7);
+                    const monthStr = localDate(d).slice(0, 7);
                     labels.push(d.toLocaleDateString('pt-BR', { month: 'short' }));
                     
                     const monthlyIn = appState.transactions
@@ -2378,7 +2458,7 @@
                 const ctxPie = chartPieEl.getContext('2d');
                 
                 // Vendas por Produto (Quantidade acumulada)
-                const currentMonth = new Date().toISOString().substring(0, 7);
+                const currentMonth = localDate().slice(0, 7);
                 const salesByProduct = {};
                 
                 appState.sales
@@ -2812,6 +2892,10 @@
         }
 
         function deleteProduct(id) {
+            if (appState.inventory.some(p => (p.recipe || []).some(r => r.productId === id))) {
+                showToast('Este material está em uma receita. Remova o vínculo antes de excluir.', 'error');
+                return;
+            }
             if (confirm('Deseja realmente excluir este produto?')) {
                 appState.inventory = appState.inventory.filter(p => p.id !== id);
                 saveData();
@@ -3390,7 +3474,7 @@
         function renderContasFixas() {
             const now = new Date();
             const currentDay = now.getDate();
-            const currentMonth = now.toISOString().substring(0, 7); // YYYY-MM
+            const currentMonth = localDate(now).slice(0, 7); // YYYY-MM
             
             let html = `
                 <div class="max-w-md mx-auto sm:max-w-none px-1">
@@ -3552,7 +3636,7 @@
                     type: 'saida',
                     description: `Pagamento Fixo: ${acc.description}`,
                     amount: acc.amount,
-                    date: new Date().toISOString().split('T')[0],
+                    date: localDate(),
                     category: acc.category,
                     account: 'Caixa Principal',
                     paymentMethod: 'PIX' // Default
@@ -3636,7 +3720,7 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-medium mb-1">Data *</label>
-                                <input type="date" id="t-date" required value="${new Date().toISOString().split('T')[0]}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <input type="date" id="t-date" required value="${localDate()}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                             </div>
                         </div>
                         <div class="grid grid-cols-2 gap-4">
@@ -3865,7 +3949,7 @@
                     phone: document.getElementById('e-phone').value,
                     email: document.getElementById('e-mail').value,
                     payCycle: document.getElementById('e-cycle').value,
-                    admission: emp ? emp.admission : new Date().toISOString().split('T')[0],
+                    admission: emp ? emp.admission : localDate(),
                     history: emp ? emp.history : []
                 };
                 if (emp) {
@@ -4082,7 +4166,7 @@
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium mb-1">Período (Mês/Ano)</label>
-                                <input type="month" id="g-period" required value="${new Date().toISOString().substring(0, 7)}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <input type="month" id="g-period" required value="${localDate().slice(0, 7)}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium mb-1">Responsável</label>
@@ -4406,7 +4490,7 @@
                             qty: qty,
                             unitPrice: unitPrice,
                             totalPrice: totalPrice,
-                            date: new Date().toISOString().split('T')[0],
+                            date: localDate(),
                             oldStock: oldStock,
                             newStock: product.stock
                         };
@@ -4563,7 +4647,7 @@
                 e.preventDefault();
                 const amount = parseFloat(document.getElementById('adv-amount').value);
                 const desc = document.getElementById('adv-desc').value || 'Vale Adiantamento';
-                const date = new Date().toISOString().split('T')[0];
+                const date = localDate();
 
                 // 1. Add to employee history
                 if (!emp.history) emp.history = [];
@@ -4633,7 +4717,7 @@
             openModal(html);
 
             document.getElementById('btn-confirm-pay').onclick = () => {
-                const date = new Date().toISOString().split('T')[0];
+                const date = localDate();
 
                 // 1. Record final payment in history
                 emp.history.push({
@@ -4777,17 +4861,17 @@
             return `
                 <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
                     <td class="px-6 py-4">
-                        <div class="font-bold text-slate-900 dark:text-white">${c.name}</div>
+                        <div class="font-bold text-slate-900 dark:text-white">${escapeHtml(c.name)}</div>
                         <div class="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
                             <i data-lucide="map-pin" class="w-3 h-3"></i>
-                            <span class="truncate max-w-[200px]">${c.address || 'Sem endereço'}</span>
+                            <span class="truncate max-w-[200px]">${escapeHtml(c.address || 'Sem endereço')}</span>
                         </div>
                     </td>
-                    <td class="px-6 py-4 text-slate-500 font-medium">${c.taxId || '<span class="text-slate-300 italic">Não informado</span>'}</td>
-                    <td class="px-6 py-4 text-slate-500 font-medium">${c.phone || '---'}</td>
+                    <td class="px-6 py-4 text-slate-500 font-medium">${escapeHtml(c.taxId) || '<span class="text-slate-300 italic">Não informado</span>'}</td>
+                    <td class="px-6 py-4 text-slate-500 font-medium">${escapeHtml(c.phone || '---')}</td>
                     <td class="px-6 py-4">
                         <span class="px-2 py-1 ${c.type === 'PF' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'} text-[10px] font-bold rounded-full border ${c.type === 'PF' ? 'border-blue-100' : 'border-purple-100'}">
-                            ${c.type}
+                            ${escapeHtml(c.type)}
                         </span>
                     </td>
                     <td class="px-6 py-4 text-right">
@@ -5273,7 +5357,7 @@
 
         let finalizePayments = [];
         let finalizeCurrentStep = 1;
-        let finalizeDate = new Date().toISOString().split('T')[0];
+        let finalizeDate = localDate();
         let finalizeHelperName = '';
         let finalizeHelperAdjustment = 0;
 
@@ -5282,7 +5366,7 @@
             if (!sale) return;
 
             finalizeCurrentStep = 1;
-            finalizeDate = new Date().toISOString().split('T')[0];
+            finalizeDate = localDate();
             finalizeHelperName = '';
             
             // Calcula os custos de ajudante por item
@@ -6000,7 +6084,7 @@
             const quoteData = {
                 id: Math.floor(1000 + Math.random() * 9000),
                 clientName: pdvClient ? pdvClient.name : 'Consumidor Final',
-                date: new Date().toISOString().split('T')[0],
+                date: localDate(),
                 items: currentCart.map(i => ({ ...i })),
                 total: total,
                 discount: pdvDiscount
@@ -6058,7 +6142,7 @@
                         <!-- Data de Entrega (Apenas para Pendente) -->
                         <div id="pdv-delivery-date-container" class="space-y-1 pt-4 border-t border-slate-100 dark:border-slate-700">
                             <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Data Prevista de Entrega</label>
-                            <input type="date" id="pdv-delivery-date" value="${new Date(Date.now() + 86400000).toISOString().split('T')[0]}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 text-sm font-bold">
+                            <input type="date" id="pdv-delivery-date" value="${localDate(new Date(Date.now() + 86400000))}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 text-sm font-bold">
                             <p class="text-[9px] text-slate-400 italic">* Necessário apenas para agendamento de entrega.</p>
                         </div>
                     </div>
@@ -6189,14 +6273,16 @@
         function confirmSale(total, status = 'completed') {
             if (currentCart.length === 0) return;
             
-            const saleId = Math.floor(100000 + Math.random() * 900000); 
+            let saleId;
+            do { saleId = Math.floor(100000 + Math.random() * 900000); }
+            while (appState.sales.some(s => s.id === saleId));
             
             // 1. Prepare Sale Object
             const sale = {
                 id: saleId,
                 clientId: pdvClient ? pdvClient.id : 0,
                 clientName: pdvClient ? pdvClient.name : 'Consumidor Final',
-                date: new Date().toISOString().split('T')[0],
+                date: localDate(),
                 deliveryDate: status === 'pending' ? document.getElementById('pdv-delivery-date').value : null,
                 items: currentCart.map(i => ({ ...i })),
                 total: total,
@@ -6776,7 +6862,7 @@
             const [y, m] = yyyyMm.split('-').map(Number);
             const start = `${yyyyMm}-01`;
             const endDate = new Date(y, m, 0);
-            const end = endDate.toISOString().split('T')[0];
+            const end = localDate(endDate);
             return { start, end };
         }
 
@@ -7030,25 +7116,25 @@
 
         function setDREPreset(preset) {
             const now = new Date();
-            const today = now.toISOString().split('T')[0];
+            const today = localDate(now);
             let start = '';
             let end = '';
 
             if (preset === 'this_month') {
-                const m = now.toISOString().slice(0, 7);
+                const m = localDate(now).slice(0, 7);
                 const range = getMonthRange(m);
                 start = range.start;
                 end = range.end;
             } else if (preset === 'last_month') {
                 const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                const m = d.toISOString().slice(0, 7);
+                const m = localDate(d).slice(0, 7);
                 const range = getMonthRange(m);
                 start = range.start;
                 end = range.end;
             } else if (preset === 'last_30') {
                 const d = new Date(now);
                 d.setDate(d.getDate() - 30);
-                start = d.toISOString().split('T')[0];
+                start = localDate(d);
                 end = today;
             } else if (preset === 'all') {
                 start = '';
@@ -7064,7 +7150,7 @@
 
         function openFinanceReportModal() {
             const now = new Date();
-            const month = now.toISOString().slice(0, 7);
+            const month = localDate(now).slice(0, 7);
             const range = getMonthRange(month);
 
             const html = `
@@ -7189,25 +7275,25 @@
 
         function setRealCostPreset(preset) {
             const now = new Date();
-            const today = now.toISOString().split('T')[0];
+            const today = localDate(now);
             let start = '';
             let end = '';
 
             if (preset === 'this_month') {
-                const m = now.toISOString().slice(0, 7);
+                const m = localDate(now).slice(0, 7);
                 const range = getMonthRange(m);
                 start = range.start;
                 end = range.end;
             } else if (preset === 'last_month') {
                 const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                const m = d.toISOString().slice(0, 7);
+                const m = localDate(d).slice(0, 7);
                 const range = getMonthRange(m);
                 start = range.start;
                 end = range.end;
             } else if (preset === 'last_30') {
                 const d = new Date(now);
                 d.setDate(d.getDate() - 30);
-                start = d.toISOString().split('T')[0];
+                start = localDate(d);
                 end = today;
             } else if (preset === 'all') {
                 start = '';
@@ -7346,7 +7432,7 @@
 
         function openRealProductCostReportModal() {
             const now = new Date();
-            const month = now.toISOString().slice(0, 7);
+            const month = localDate(now).slice(0, 7);
             const range = getMonthRange(month);
 
             const products = appState.inventory.filter(p => p.type === 'final').slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -7415,25 +7501,25 @@
 
         function setReportVendasPreset(preset) {
             const now = new Date();
-            const today = now.toISOString().split('T')[0];
+            const today = localDate(now);
             let start = '';
             let end = '';
 
             if (preset === 'this_month') {
-                const m = now.toISOString().slice(0, 7);
+                const m = localDate(now).slice(0, 7);
                 const range = getMonthRange(m);
                 start = range.start;
                 end = range.end;
             } else if (preset === 'last_month') {
                 const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                const m = d.toISOString().slice(0, 7);
+                const m = localDate(d).slice(0, 7);
                 const range = getMonthRange(m);
                 start = range.start;
                 end = range.end;
             } else if (preset === 'last_30') {
                 const d = new Date(now);
                 d.setDate(d.getDate() - 30);
-                start = d.toISOString().split('T')[0];
+                start = localDate(d);
                 end = today;
             } else if (preset === 'all') {
                 start = '';
@@ -7645,9 +7731,9 @@
                 title = "Relatório de Matéria-Prima";
                 
                 const now = new Date();
-                const thisMonth = now.toISOString().slice(0, 7);
+                const thisMonth = localDate(now).slice(0, 7);
                 const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+                const lastMonth = localDate(lastMonthDate).slice(0, 7);
                 
                 const purchases = (appState.stockMovements || []).filter(m => m.type === 'entrada');
                 
@@ -7746,7 +7832,7 @@
                         const last6Months = [];
                         for(let i=5; i>=0; i--) {
                             const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                            last6Months.push(d.toISOString().slice(0, 7));
+                            last6Months.push(localDate(d).slice(0, 7));
                         }
 
                         const topItems = Object.values(currentStats)
@@ -7813,7 +7899,7 @@
                 const last30Days = new Date(now);
                 last30Days.setDate(now.getDate() - 30);
                 const defaultStart = last30Days.toISOString().split('T')[0];
-                const defaultEnd = now.toISOString().split('T')[0];
+                const defaultEnd = localDate(now);
 
                 content = `
                     <div class="space-y-6">
@@ -7881,20 +7967,20 @@
 
                 window.setCaixaReportPreset = (preset) => {
                     const now = new Date();
-                    const today = now.toISOString().split('T')[0];
+                    const today = localDate(now);
                     let start = '';
                     let end = today;
 
                     if (preset === 'last_7') {
                         const d = new Date(now);
                         d.setDate(d.getDate() - 7);
-                        start = d.toISOString().split('T')[0];
+                        start = localDate(d);
                     } else if (preset === 'last_30') {
                         const d = new Date(now);
                         d.setDate(d.getDate() - 30);
-                        start = d.toISOString().split('T')[0];
+                        start = localDate(d);
                     } else if (preset === 'this_month') {
-                        start = now.toISOString().slice(0, 7) + '-01';
+                        start = localDate(now).slice(0, 7) + '-01';
                     } else if (preset === 'all') {
                         start = '';
                         end = '';
@@ -8399,50 +8485,15 @@
 
             if (configTab === 'acesso') {
                 return `
-                    <div class="space-y-6 animate-fade-in">
-                        <button onclick="switchConfigTab('menu')" class="flex items-center gap-2 text-primary-600 font-black text-[10px] uppercase tracking-widest mb-4">
-                            <i data-lucide="chevron-left" class="w-4 h-4"></i> Voltar ao Menu
-                        </button>
-                        
-                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700">
-                            <h3 class="font-black mb-6 flex items-center gap-2 uppercase tracking-tighter text-slate-900 dark:text-white">
-                                <i data-lucide="key" class="w-5 h-5 text-primary-600"></i>
-                                Acesso
-                            </h3>
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Email de Acesso</label>
-                                    <input type="email" id="conf-login-email" value="${appState.config.loginEmail || ''}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
-                                </div>
-                                <div>
-                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Senha Atual</label>
-                                    <div class="relative">
-                                        <input type="password" id="conf-login-current-pass" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
-                                        <button onclick="togglePasswordVisibility('conf-login-current-pass')" class="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-primary-600 transition-colors">
-                                            <i data-lucide="eye" class="w-5 h-5" id="eye-conf-login-current-pass"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Nova Senha</label>
-                                    <div class="relative">
-                                        <input type="password" id="conf-login-pass" value="" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
-                                        <button onclick="togglePasswordVisibility('conf-login-pass')" class="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-primary-600 transition-colors">
-                                            <i data-lucide="eye" class="w-5 h-5" id="eye-conf-login-pass"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Texto da Dica no Login</label>
-                                    <textarea id="conf-login-hint" rows="3" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">${appState.config.loginHintText || ''}</textarea>
-                                </div>
-                            </div>
-                            <button onclick="saveAccessSettings()" class="w-full mt-6 py-4 bg-primary-600 text-white font-black rounded-2xl hover:bg-primary-700 shadow-lg shadow-primary-500/20 transition-all active:scale-95 uppercase text-xs tracking-widest">
-                                Salvar Acesso
-                            </button>
+                    <div class="space-y-6">
+                        <button onclick="switchConfigTab('menu')" class="text-primary-600">Voltar ao Menu</button>
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm space-y-4">
+                            <h3 class="text-xl font-bold">Acesso</h3>
+                            <p>Seu e-mail: <strong>${escapeHtml(currentUser?.email || '')}</strong></p>
+                            <p class="text-sm text-slate-500">Sua senha é protegida pelo serviço de autenticação. Para alterá-la, solicite as instruções por e-mail.</p>
+                            <button onclick="requestPasswordReset()" class="p-3 bg-primary-600 text-white rounded-xl">Receber instruções para alterar a senha</button>
                         </div>
-                    </div>
-                `;
+                    </div>`;
             }
 
             if (configTab === 'categorias') {
@@ -8591,7 +8642,7 @@
                                                     </div>
                                                     <div>
                                                         <p class="font-black text-sm text-slate-900 dark:text-white uppercase tracking-tight">${e.name}</p>
-                                                        <p class="text-[9px] ${isUrgent ? 'text-red-600 font-black' : 'text-slate-500'} uppercase font-bold">Próxima: ${formatDate(next.toISOString().split('T')[0])}</p>
+                                                        <p class="text-[9px] ${isUrgent ? 'text-red-600 font-black' : 'text-slate-500'} uppercase font-bold">Próxima: ${formatDate(localDate(next))}</p>
                                                     </div>
                                                 </div>
                                                 <div class="text-right">
@@ -8848,20 +8899,31 @@
                 return;
             }
 
-            const confirmMsg = `Você está prestes a subir os dados locais para o ambiente ${currentEnv.toUpperCase()}. Isso substituirá qualquer dado que já exista na nuvem neste ambiente. Tem certeza?`;
+            const confirmMsg = `Você está prestes a subir os dados locais para o ambiente ${currentEnv.toUpperCase()}. A operação só continuará se este ambiente estiver vazio na nuvem. Tem certeza?`;
             
             if (confirm(confirmMsg)) {
                 showToast("Iniciando migração...");
                 
-                db.collection('appData').doc(dbDocName).set(appState)
+                const migrationSnapshot = JSON.parse(JSON.stringify(appState));
+                db.runTransaction(async transaction => {
+                    const ref = db.collection('appData').doc(dbDocName);
+                    const remote = await transaction.get(ref);
+                    if (remote.exists) throw new Error('O ambiente já contém dados. A migração foi cancelada para preservá-los.');
+                    transaction.set(ref, migrationSnapshot);
+                })
                     .then(() => {
                         cloudSyncEnabled = true;
+                        cloudBaseline = canonical(migrationSnapshot);
+                        pendingCloudSave = canonical(appState) !== cloudBaseline;
+                        if (pendingCloudSave) saveData();
+                        else localStorage.removeItem(pendingKey);
+                        setSaveStatus('Salvo neste aparelho e na nuvem.');
                         showToast("Migração concluída com sucesso!");
                         renderConfig();
                     })
                     .catch(err => {
                         console.error("Erro na migração:", err);
-                        showToast("Falha na migração. Verifique sua conexão.", "error");
+                        showToast(err.message || "Falha na migração. Verifique sua conexão.", "error");
                     });
             }
         }
@@ -9012,7 +9074,7 @@
         function recordMaintenance(id) {
             const eq = appState.equipment.find(e => e.id === id);
             if (eq) {
-                eq.lastMaintenance = new Date().toISOString().split('T')[0];
+                eq.lastMaintenance = localDate();
                 saveData();
                 renderConfig();
                 showToast(`Manutenção registrada!`);
@@ -9058,7 +9120,7 @@
         function recordMaintenance(id) {
             const eq = appState.equipment.find(e => e.id === id);
             if (eq) {
-                eq.lastMaintenance = new Date().toISOString().split('T')[0];
+                eq.lastMaintenance = localDate();
                 saveData();
                 renderConfig();
                 showToast(`Manutenção de "${eq.name}" registrada!`);
@@ -9069,65 +9131,6 @@
             saveData();
             renderConfig();
             showToast('Equipamento excluído!');
-        }
-
-        function saveAccessSettings() {
-            const emailEl = document.getElementById('conf-login-email');
-            const currentPassEl = document.getElementById('conf-login-current-pass');
-            const passEl = document.getElementById('conf-login-pass');
-            const hintEl = document.getElementById('conf-login-hint');
-
-            const currentPass = (currentPassEl?.value || '').trim();
-            let newPass = (passEl?.value || '').trim();
-            const email = (emailEl?.value || '').trim();
-            const hint = (hintEl?.value || '').trim();
-
-            if (currentPass !== appState.config.loginPassword) {
-                showToast('A senha atual está incorreta.', 'error');
-                return;
-            }
-
-            // Se a nova senha estiver vazia, mantém a atual
-            if (!newPass) {
-                newPass = appState.config.loginPassword;
-            }
-
-            const html = `
-                <div class="p-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-black dark:text-white uppercase tracking-tight">Confirmar Alteração</h3>
-                        <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
-                            <i data-lucide="x" class="w-5 h-5"></i>
-                        </button>
-                    </div>
-                    <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
-                        <p class="text-sm font-bold text-slate-700 dark:text-slate-200">Tem certeza que deseja alterar a senha?</p>
-                    </div>
-                    <div class="mt-6 flex gap-3">
-                        <button onclick="closeModal()" class="flex-1 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-700 transition-all">
-                            Cancelar
-                        </button>
-                        <button id="confirm-pass-change" class="flex-1 py-3 bg-primary-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:brightness-95 transition-all">
-                            Confirmar
-                        </button>
-                    </div>
-                </div>
-            `;
-            openModal(html);
-            
-            const confirmBtn = document.getElementById('confirm-pass-change');
-            if (confirmBtn) {
-                confirmBtn.onclick = () => {
-                    appState.config.loginEmail = email;
-                    appState.config.loginPassword = newPass;
-                    appState.config.loginHintText = hint;
-                    saveData();
-                    updateLoginHint();
-                    closeModal();
-                    showToast('Acesso atualizado!');
-                    switchConfigTab('menu');
-                };
-            }
         }
 
         function openEquipmentModal() {
@@ -9147,7 +9150,7 @@
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium mb-1">Última Manutenção *</label>
-                                <input type="date" id="eq-last" required value="${new Date().toISOString().split('T')[0]}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none">
+                                <input type="date" id="eq-last" required value="${localDate()}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium mb-1">Intervalo (Dias) *</label>
@@ -9181,6 +9184,7 @@
         }
 
         function exportData() {
+            if (appState.config) delete appState.config.loginPassword;
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appState));
             const downloadAnchorNode = document.createElement('a');
             downloadAnchorNode.setAttribute("href", dataStr);
@@ -9191,18 +9195,28 @@
         }
 
         function importData(input) {
-            const file = input.files[0];
+            const file = input.files && input.files[0];
+            if (!file) return;
+            if (file.size > 10 * 1024 * 1024) {
+                showToast('O backup excede o tamanho permitido de 10 MB.', 'error');
+                input.value = '';
+                return;
+            }
             const reader = new FileReader();
-            reader.onload = (e) => {
+            reader.onload = async (e) => {
                 try {
-                    const imported = JSON.parse(e.target.result);
+                    const imported = validateBackup(JSON.parse(e.target.result), createEmptyState());
+                    if (!confirm('Restaurar este backup substituirá os dados atuais deste ambiente. Uma cópia local será preservada. Continuar?')) return;
+                    localStorage.setItem('financeProBeforeImport-' + currentEnv, JSON.stringify(appState));
                     appState = imported;
-                    saveData();
-                    location.reload();
+                    await saveData();
+                    renderContent();
+                    updateLoginHint();
                 } catch (err) {
-                    showToast('Erro ao importar arquivo!', 'error');
-                }
+                    showToast('Backup não importado: ' + err.message, 'error');
+                } finally { input.value = ''; }
             };
+            reader.onerror = () => { showToast('Não foi possível ler o backup.', 'error'); input.value = ''; };
             reader.readAsText(file);
         }
 
@@ -9222,12 +9236,14 @@
             }
 
             try {
-                localStorage.clear();
+                localStorage.removeItem(dataStorageKey);
+                localStorage.removeItem('financeProUser');
+                localStorage.removeItem(pendingKey);
             } catch (_) {
             }
 
             try {
-                localStorage.setItem('financeProData', JSON.stringify(createEmptyState()));
+                localStorage.setItem(dataStorageKey, JSON.stringify(createEmptyState()));
             } catch (_) {
             }
 
@@ -9247,7 +9263,7 @@
             } catch (_) {
             }
 
-            window.location.replace(window.location.pathname + '?r=' + Date.now());
+            window.location.replace(window.location.pathname + '?env=' + encodeURIComponent(currentEnv) + '&r=' + Date.now());
         }
 
         // --- APP INITIALIZATION ---
@@ -9258,15 +9274,27 @@
             // --- Lógica do Firebase com Ambientes ---
             if (firebaseReady && db) {
                 // Ouvinte em tempo real no documento do ambiente correto
-                db.collection('appData').doc(dbDocName).onSnapshot((doc) => {
+                if (cloudUnsubscribe) cloudUnsubscribe();
+                cloudUnsubscribe = db.collection('appData').doc(dbDocName).onSnapshot({ includeMetadataChanges: true }, (doc) => {
+                    if (doc.metadata.hasPendingWrites || doc.metadata.fromCache) return;
                     if (doc.exists) {
                         const cloudData = doc.data();
                         // Se detectarmos dados na nuvem, ativamos o sincronismo
                         cloudSyncEnabled = true;
                         
+                        if (pendingCloudSave || syncRunning) {
+                            if (!syncRunning) syncLocalChanges();
+                            return;
+                        }
+                        cloudBaseline = canonical(cloudData);
                         // Atualiza o estado local com os dados da nuvem
                         appState = cloudData;
-                        localStorage.setItem('financeProData', JSON.stringify(appState));
+                        if (appState.config) delete appState.config.loginPassword;
+                        try {
+                            localStorage.setItem(dataStorageKey, JSON.stringify(appState));
+                        } catch (_) {
+                            setSaveStatus('Dados carregados da nuvem, mas não foi possível guardar uma cópia neste aparelho.', true);
+                        }
                         if (currentUser) {
                             renderContent();
                             // Tenta reconstruir apenas se necessário e após a primeira renderização
@@ -9276,9 +9304,12 @@
                         // Se não existe na nuvem, o sincronismo fica desativado
                         // Isso protege os dados locais de serem sobrescritos por um documento vazio
                         cloudSyncEnabled = false;
+                        if (!pendingCloudSave) cloudBaseline = null;
+                        setSaveStatus('Dados disponíveis apenas neste aparelho. Nuvem sem dados.', true);
                         console.log(`Ambiente ${currentEnv} aguardando migração ou novos dados.`);
                     }
                 }, (err) => {
+                    setSaveStatus("Não foi possível acessar a nuvem. Verifique a conexão e as permissões.", true);
                     console.error("Erro no ouvinte do Firebase:", err);
                 });
             }
@@ -9346,16 +9377,10 @@
             }
         }
 
-        // Auto-init if user already logged in
         window.onload = () => {
-            if (currentUser) {
-                initApp();
-            } else {
-                try {
-                    lucide.createIcons();
-                } catch (_) {
-                }
-            }
+            try { lucide.createIcons(); } catch (_) {}
+            if (auth) auth.onAuthStateChanged(handleAuthState);
+            else setLoginError('Não foi possível iniciar o acesso seguro. Verifique sua conexão e recarregue.');
         };
 
         if ('serviceWorker' in navigator && location.protocol !== 'file:') {

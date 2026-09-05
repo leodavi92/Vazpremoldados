@@ -1,7 +1,8 @@
-const CACHE_NAME = 'app-fabrica-v2';
+const CACHE_NAME = 'app-fabrica-v3';
 const ASSETS = [
   './',
   './index.html',
+  './app-safety.js',
   './manifest.webmanifest',
   './app-icon.svg'
 ];
@@ -16,7 +17,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.map((key) => (key === CACHE_NAME ? null : caches.delete(key))))
+      Promise.all(keys.filter(key => key.startsWith('app-fabrica-') && key !== CACHE_NAME).map(key => caches.delete(key)))
     )
   );
   self.clients.claim();
@@ -34,8 +35,9 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
+          if (!response.ok) throw new Error('Página indisponível');
           const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', responseToCache));
+          event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', responseToCache)));
           return response;
         })
         .catch(() => caches.match('./index.html'))
@@ -48,9 +50,9 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached;
 
       return fetch(event.request).then((response) => {
-        if (!isSameOrigin) return response;
+        if (!isSameOrigin || !response.ok) return response;
         const responseToCache = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
+        event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache)));
         return response;
       });
     })
