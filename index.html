@@ -4823,25 +4823,12 @@
                     <div class="p-4 border-b border-slate-100 dark:border-slate-700">
                         <div class="relative w-full sm:w-72">
                             <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
-                            <input type="text" id="client-search" onkeyup="filterClients()" placeholder="Buscar por nome, CPF/CNPJ..." 
+                            <input type="text" id="client-search" oninput="filterClients()" placeholder="Buscar por nome, CPF/CNPJ..."
                                 class="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm outline-none">
                         </div>
                     </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-sm text-left">
-                            <thead class="bg-slate-50 dark:bg-slate-700/50 text-slate-500">
-                                <tr>
-                                    <th class="px-6 py-4">Nome / Razão Social</th>
-                                    <th class="px-6 py-4">CPF / CNPJ</th>
-                                    <th class="px-6 py-4">Contato</th>
-                                    <th class="px-6 py-4">Tipo</th>
-                                    <th class="px-6 py-4 text-right">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody id="client-table-body" class="divide-y divide-slate-100 dark:divide-slate-700">
-                                ${appState.clients.map(c => renderClientRow(c)).join('')}
-                            </tbody>
-                        </table>
+                    <div id="client-table-body" class="divide-y divide-slate-100 dark:divide-slate-700">
+                        ${appState.clients.length ? appState.clients.map(c => renderClientRow(c)).join('') : '<p class="p-6 text-slate-500">Nenhum cliente cadastrado.</p>'}
                     </div>
                 </div>
             `;
@@ -4851,36 +4838,48 @@
 
         function renderClientRow(c) {
             return `
-                <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-                    <td class="px-6 py-4">
-                        <div class="font-bold text-slate-900 dark:text-white">${escapeHtml(c.name)}</div>
-                        <div class="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
-                            <i data-lucide="map-pin" class="w-3 h-3"></i>
-                            <span class="truncate max-w-[200px]">${escapeHtml(c.address || 'Sem endereço')}</span>
-                        </div>
-                    </td>
-                    <td class="px-6 py-4 text-slate-500 font-medium">${escapeHtml(c.taxId) || '<span class="text-slate-300 italic">Não informado</span>'}</td>
-                    <td class="px-6 py-4 text-slate-500 font-medium">${escapeHtml(c.phone || '---')}</td>
-                    <td class="px-6 py-4">
-                        <span class="px-2 py-1 ${c.type === 'PF' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'} text-[10px] font-bold rounded-full border ${c.type === 'PF' ? 'border-blue-100' : 'border-purple-100'}">
-                            ${escapeHtml(c.type)}
-                        </span>
-                    </td>
-                    <td class="px-6 py-4 text-right">
-                        <div class="flex justify-end gap-2">
-                            <button onclick="openClientHistory(${c.id})" class="p-2 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg text-primary-600 transition-colors" title="Histórico de Compras">
-                                <i data-lucide="history" class="w-4 h-4"></i>
-                            </button>
-                            <button onclick="editClient(${c.id})" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-slate-400 hover:text-primary-600 transition-colors">
-                                <i data-lucide="edit-2" class="w-4 h-4"></i>
-                            </button>
-                            <button onclick="deleteClient(${c.id})" class="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-slate-400 hover:text-danger transition-colors">
-                                <i data-lucide="trash-2" class="w-4 h-4"></i>
-                            </button>
-                        </div>
-                    </td>
-                </tr>
+                <button type="button" onclick="openClientDetails(${Number(c.id)})" class="w-full min-h-[64px] px-5 py-5 text-left text-base font-bold text-slate-900 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-700/30 focus-visible:ring-2 focus-visible:ring-primary-500 break-words">
+                    ${escapeHtml(c.name)}
+                </button>
             `;
+        }
+
+        function filterClients() {
+            const query = (document.getElementById('client-search').value || '').toLocaleLowerCase('pt-BR').trim();
+            const clients = appState.clients.filter(c => [c.name, c.taxId].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(query)));
+            document.getElementById('client-table-body').innerHTML = clients.length
+                ? clients.map(renderClientRow).join('')
+                : '<p class="p-6 text-slate-500">Nenhum cliente encontrado.</p>';
+        }
+
+        function openClientDetails(clientId) {
+            const client = appState.clients.find(c => c.id === clientId);
+            if (!client) return;
+            const fields = [
+                ['Tipo', client.type === 'PJ' ? 'Pessoa Jurídica' : 'Pessoa Física'],
+                ['CPF / CNPJ', client.taxId], ['Telefone', client.phone], ['E-mail', client.email],
+                ['Rua / Logradouro', client.street], ['Quadra', client.block], ['Número', client.number],
+                ['Bairro', client.neighborhood], ['Cidade', client.city], ['Estado', client.state],
+                ['Ponto de referência', client.reference]
+            ];
+            if (client.address && !client.street) fields.push(['Endereço cadastrado', client.address]);
+            openModal(`
+                <div class="p-5 sm:p-6">
+                    <div class="flex items-start justify-between gap-3 mb-6">
+                        <div class="min-w-0"><p class="text-sm text-slate-500 mb-1">Dados do cliente</p><h3 class="text-xl font-bold dark:text-white break-words">${escapeHtml(client.name)}</h3></div>
+                        <button type="button" onclick="closeModal()" aria-label="Fechar dados do cliente" class="shrink-0 p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700"><i data-lucide="x" class="w-5 h-5"></i></button>
+                    </div>
+                    <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        ${fields.map(([label, value]) => `<div class="min-w-0 p-3 rounded-xl bg-slate-50 dark:bg-slate-700/50"><dt class="text-xs text-slate-500 dark:text-slate-400 mb-1">${label}</dt><dd class="text-base text-slate-900 dark:text-white break-words">${escapeHtml(value || 'Não informado')}</dd></div>`).join('')}
+                    </dl>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6">
+                        <button type="button" onclick="editClient(${Number(client.id)})" class="min-h-[48px] p-3 rounded-xl bg-primary-600 text-white font-semibold">Editar cliente</button>
+                        <button type="button" onclick="openClientHistory(${Number(client.id)})" class="min-h-[48px] p-3 rounded-xl border border-slate-200 dark:border-slate-600 dark:text-white font-semibold">Histórico de compras</button>
+                        <button type="button" onclick="deleteClient(${Number(client.id)})" class="min-h-[48px] p-3 rounded-xl text-red-600 font-semibold">Excluir cliente</button>
+                        <button type="button" onclick="closeModal()" class="min-h-[48px] p-3 rounded-xl bg-slate-100 dark:bg-slate-700 dark:text-white font-semibold">Fechar</button>
+                    </div>
+                </div>
+            `);
         }
 
         function openClientHistory(clientId) {
