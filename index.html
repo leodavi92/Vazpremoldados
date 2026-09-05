@@ -664,15 +664,19 @@
             } catch (err) { showToast('Não foi possível recuperar: ' + err.message, 'error'); }
         }
 
+        let saveOutcome = null;
         function saveData() {
+            saveOutcome = 'saving';
             if (appState.config) delete appState.config.loginPassword;
             try {
                 // Persist the pending marker first: a reload must not silently discard local edits.
                 localStorage.setItem(pendingKey, JSON.stringify({ baseline: cloudBaseline ?? null }));
                 localStorage.setItem(dataStorageKey, JSON.stringify(appState));
                 pendingCloudSave = true;
+                saveOutcome = 'local';
             } catch (err) {
                 pendingCloudSave = true;
+                saveOutcome = 'failed';
                 setSaveStatus('Não foi possível salvar neste aparelho. Exporte um backup antes de fechar o app.', true);
                 return Promise.resolve(false);
             }
@@ -706,6 +710,7 @@
                         if (pendingCloudSave) localStorage.setItem(pendingKey, JSON.stringify({ baseline: cloudBaseline }));
                         else localStorage.removeItem(pendingKey);
                     }
+                    saveOutcome = 'synced';
                     setSaveStatus('Salvo neste aparelho e na nuvem.');
                     return true;
                 } catch (err) {
@@ -1075,6 +1080,12 @@
         }
 
         function showToast(message, type = 'success') {
+            if (type === 'success' && saveOutcome === 'failed') {
+                message = 'Não foi possível salvar neste aparelho. Mantenha o app aberto e exporte um backup.';
+                type = 'error';
+            } else if (type === 'success' && saveOutcome === 'local') {
+                message += ' Salvo neste aparelho; confirmação da nuvem pendente.';
+            }
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
             const bgColor = type === 'success' ? 'bg-success' : 'bg-danger';
@@ -1852,12 +1863,28 @@
         }
 
         function deleteProduction(id) {
-            if (confirm('Deseja excluir este registro de produção? (O estoque não será revertido automaticamente)')) {
-                appState.production = appState.production.filter(p => p.id !== id);
-                saveData();
-                renderProducao();
-                showToast('Registro excluído.', 'error');
+            const record = appState.production.find(p => p.id === id);
+            if (!record) return;
+            const product = appState.inventory.find(p => p.id === record.productId);
+            const materials = record.materials;
+            if (!product || !Number.isFinite(record.qty) || record.qty <= 0 || !Array.isArray(materials) || !materials.length || materials.some(m => !Number.isFinite(m.qty) || m.qty <= 0 || !appState.inventory.some(p => p.id === m.productId))) {
+                showToast('Este registro não tem os dados necessários para um estorno seguro. Confira os produtos e materiais cadastrados.', 'error');
+                return;
             }
+            const deltas = new Map([[product.id, -record.qty]]);
+            materials.forEach(m => deltas.set(m.productId, (deltas.get(m.productId) || 0) + m.qty));
+            if ([...deltas].some(([key, delta]) => !Number.isFinite(appState.inventory.find(p => p.id === key).stock) || appState.inventory.find(p => p.id === key).stock + delta < 0)) {
+                showToast('Não é possível estornar: parte dessa produção já foi vendida ou utilizada. Regularize o estoque primeiro.', 'error');
+                return;
+            }
+            if (!confirm('Estornar esta produção? O produto acabado será descontado e os materiais usados serão devolvidos ao estoque.')) return;
+            deltas.forEach((delta, key) => { appState.inventory.find(p => p.id === key).stock += delta; });
+            if (!Array.isArray(appState.productionReversals)) appState.productionReversals = [];
+            appState.productionReversals.push({ ...record, reversedAt: new Date().toISOString() });
+            appState.production = appState.production.filter(p => p.id !== id);
+            saveData();
+            renderProducao();
+            showToast('Produção estornada e estoque ajustado.');
         }
 
         // --- DASHBOARD RENDER ---
@@ -3246,12 +3273,7 @@
         }
 
         function deleteSaleTransactions(saleId) {
-            if (confirm('Atenção: Isso excluirá todas as transações financeiras vinculadas a esta venda. Deseja continuar?')) {
-                appState.transactions = appState.transactions.filter(t => t.saleId !== saleId);
-                saveData();
-                renderCaixa();
-                showToast('Transações da venda excluídas.', 'error');
-            }
+            showToast('Os lançamentos vinculados a vendas estão protegidos contra exclusão para manter o caixa e o histórico consistentes.', 'error');
         }
 
         function openTransactionDetails(id) {
@@ -3815,6 +3837,12 @@
         }
 
         function deleteTransaction(id) {
+            const transaction = appState.transactions.find(t => t.id === id);
+            if (!transaction) return;
+            if (transaction.saleId != null) {
+                showToast('Este lançamento pertence a uma venda e não pode ser apagado separadamente.', 'error');
+                return;
+            }
             if (confirm('Deseja realmente excluir esta transação?')) {
                 appState.transactions = appState.transactions.filter(t => t.id !== id);
                 saveData();
@@ -6462,6 +6490,10 @@
         }
 
         function openDeliveryMessage(sale) {
+            if (saveOutcome === 'failed') {
+                openModal('<div class="p-6"><h3 class="text-lg font-bold text-red-600">Não foi possível salvar</h3><p class="my-4 dark:text-white">Mantenha o app aberto. Exporte uma cópia dos dados antes de continuar.</p><button onclick="exportData()" class="p-3 rounded-xl bg-primary-600 text-white">Exportar backup</button><button onclick="closeModal()" class="p-3 ml-2">Voltar</button></div>');
+                return;
+            }
             const client = appState.clients.find(c => c.id === sale.clientId);
             let phone = String(client?.phone || '').replace(/\D/g, '');
             if (phone.length === 10 || phone.length === 11) phone = '55' + phone;
@@ -6488,6 +6520,10 @@
 
         let currentSuccessSale = null;
         function openPostSaleSuccessModal(sale) {
+            if (saveOutcome === 'failed') {
+                openModal('<div class="p-6"><h3 class="text-lg font-bold text-red-600">Não foi possível salvar</h3><p class="my-4 dark:text-white">Mantenha o app aberto. Exporte uma cópia dos dados antes de continuar.</p><button onclick="exportData()" class="p-3 rounded-xl bg-primary-600 text-white">Exportar backup</button><button onclick="closeModal()" class="p-3 ml-2">Voltar</button></div>');
+                return;
+            }
             currentSuccessSale = sale;
             let html = `
                 <div class="p-8 text-center">
