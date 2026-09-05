@@ -725,6 +725,21 @@
             if (currentUser && pendingCloudSave && cloudSyncEnabled) syncLocalChanges();
         });
 
+        function saleItemCost(item) {
+            if (Number.isFinite(item.unitCost) && item.unitCost >= 0) return item.unitCost;
+            // Legacy sales have no historical cost; retain the previous estimate.
+            const product = appState.inventory.find(p => p.id === item.productId);
+            return Number.isFinite(product?.costPrice) && product.costPrice >= 0 ? product.costPrice : 0;
+        }
+
+        function snapshotSaleItems(items) {
+            return items.map(item => {
+                const product = appState.inventory.find(p => p.id === item.productId);
+                if (!product || !Number.isFinite(product.costPrice) || product.costPrice < 0) throw new Error('Confira o custo cadastrado de todos os produtos antes de finalizar.');
+                return { ...item, unitCost: product.costPrice };
+            });
+        }
+
         function calculateBreakEvenData(resetDateStr, endDateStr = null) {
             const salariesCosts = (appState.employees || []).reduce((acc, emp) => acc + (emp.salary || 0), 0);
             const baseFixedCosts = (appState.fixedAccounts || []).reduce((acc, a) => acc + (a.amount || 0), 0) + salariesCosts;
@@ -740,7 +755,7 @@
             const totalVariableCosts = monthlySales.reduce((acc, s) => {
                 const materialsCost = (s.items || []).reduce((itemAcc, item) => {
                     const product = (appState.inventory || []).find(p => p.id === item.productId);
-                    return itemAcc + (product ? ((product.costPrice || 0) * (item.qty || 0)) : 0);
+                    return itemAcc + saleItemCost(item) * (item.qty || 0);
                 }, 0);
                 return acc + materialsCost + (s.deliveryHelperCostTotal || 0) + (s.fee || 0);
             }, 0);
@@ -6319,6 +6334,9 @@
                     if (!field.reportValidity()) return;
                 }
             }
+            let saleItems;
+            try { saleItems = snapshotSaleItems(currentCart); }
+            catch (err) { showToast(err.message, 'error'); return; }
             let saleId;
             do { saleId = Math.floor(100000 + Math.random() * 900000); }
             while (appState.sales.some(s => s.id === saleId));
@@ -6331,7 +6349,7 @@
                 date: localDate(),
                 deliveryDate: status === 'pending' ? document.getElementById('pdv-delivery-date').value : null,
                 deliveryTime: status === 'pending' ? document.getElementById('pdv-delivery-time').value : null,
-                items: currentCart.map(i => ({ ...i })),
+                items: saleItems,
                 total: total,
                 payments: pdvPayments.map(p => ({ ...p })), // Armazena múltiplos pagamentos
                 fee: 0,
@@ -7350,7 +7368,7 @@
                     const qty = item.qty || 0;
                     const displayQty = item.isMeter ? (item.units || 1) : qty;
                     const revenue = (item.price || 0) * qty;
-                    const fabricationCost = (p?.costPrice || 0) * qty;
+                    const fabricationCost = saleItemCost(item) * qty;
                     const effectiveHelperFee = helperFeePerUnit || (p?.helperFee || 0);
                     const helperCost = displayQty * helperCount * effectiveHelperFee;
                     const totalCost = fabricationCost + helperCost;
