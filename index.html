@@ -5187,6 +5187,7 @@
                                     </div>
 
                                     <div class="p-4 bg-slate-50 dark:bg-slate-700/50 border-t border-slate-100 dark:border-slate-700 grid grid-cols-2 gap-3">
+                                        <button onclick="reopenDeliveryMessage(${Number(s.id)})" class="col-span-2 py-3 rounded-xl border border-primary-200 text-primary-600 dark:text-primary-400 font-bold text-sm">Ver agendamento / enviar mensagem</button>
                                         <button onclick="finalizePendingSale(${s.id})" class="py-3 bg-green-600 text-white font-black rounded-2xl hover:brightness-95 transition-all active:scale-95 uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-green-600/20">
                                             <i data-lucide="check-circle" class="w-4 h-4"></i> Confirmar
                                         </button>
@@ -6150,7 +6151,7 @@
                             <input type="date" id="pdv-delivery-date" value="${localDate(new Date(Date.now() + 86400000))}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 text-sm font-bold">
                             <div class="p-4 rounded-2xl bg-primary-50 dark:bg-slate-800 border border-primary-100 dark:border-slate-600 mt-3">
                                 <label for="pdv-delivery-time" class="flex items-center gap-2 text-sm font-bold text-primary-700 dark:text-primary-300 mb-3"><i data-lucide="clock" class="w-5 h-5"></i> Horário previsto</label>
-                                <input type="time" id="pdv-delivery-time" aria-describedby="delivery-time-hint" class="block w-full min-w-0 min-h-[52px] p-3 bg-white dark:bg-slate-700 dark:text-white border border-primary-200 dark:border-slate-600 rounded-xl text-lg font-semibold outline-none focus:ring-2 focus:ring-primary-500">
+                                <input type="text" readonly onclick="openDeliveryTimePicker()" onkeydown="if(event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDeliveryTimePicker(); }" placeholder="Escolher horário" id="pdv-delivery-time" aria-describedby="delivery-time-hint" class="block w-full min-w-0 min-h-[52px] p-3 bg-white dark:bg-slate-700 dark:text-white border border-primary-200 dark:border-slate-600 rounded-xl text-lg font-semibold outline-none focus:ring-2 focus:ring-primary-500">
                                 <p id="delivery-time-hint" class="text-xs text-slate-500 dark:text-slate-400 mt-2">Toque para escolher a hora da entrega.</p>
                             </div>
                             <p class="text-xs text-slate-400">Data e horário são necessários para agendar.</p>
@@ -6283,6 +6284,7 @@
         function confirmSale(total, status = 'completed') {
             if (currentCart.length === 0) return;
             if (status === 'pending') {
+                if (!deliveryTimeSlots().includes(document.getElementById('pdv-delivery-time').value)) { openDeliveryTimePicker(); return; }
                 for (const id of ['pdv-delivery-date', 'pdv-delivery-time']) {
                     const field = document.getElementById(id);
                     field.required = true;
@@ -6407,11 +6409,43 @@
             }
         }
 
+        function deliveryTimeSlots() {
+            return Array.from({ length: 24 }, (_, i) => {
+                const minutes = 330 + i * 30;
+                return String(Math.floor(minutes / 60)).padStart(2, '0') + ':' + String(minutes % 60).padStart(2, '0');
+            });
+        }
+
+        function openDeliveryTimePicker() {
+            if (document.getElementById('delivery-time-picker')) return;
+            const field = document.getElementById('pdv-delivery-time');
+            if (!field) return;
+            const picker = document.createElement('dialog');
+            picker.id = 'delivery-time-picker';
+            picker.setAttribute('aria-labelledby', 'delivery-time-title');
+            picker.className = 'p-0 rounded-2xl bg-white dark:bg-slate-800 dark:text-white shadow-xl';
+            picker.style.cssText = 'width:min(360px,calc(100vw - 24px));max-height:85dvh;';
+            picker.innerHTML = '<div class="p-4"><h3 id="delivery-time-title" class="text-lg font-bold mb-1">Horário da entrega</h3><p class="text-sm text-slate-500 mb-4">Das 05:30 às 17:00, a cada 30 minutos.</p><div class="grid grid-cols-3 gap-2">' + deliveryTimeSlots().map(time => '<button type="button" data-time="' + time + '" class="min-h-[44px] rounded-xl border font-semibold ' + (time === field.value ? 'bg-primary-600 text-white' : 'border-slate-200 dark:border-slate-600 hover:bg-primary-50 dark:hover:bg-slate-700') + '">' + time + '</button>').join('') + '</div><button type="button" data-cancel class="w-full mt-4 min-h-[44px] rounded-xl bg-slate-100 dark:bg-slate-700">Voltar</button></div>';
+            document.body.appendChild(picker);
+            picker.querySelectorAll('[data-time]').forEach(button => button.onclick = () => {
+                field.value = button.dataset.time;
+                picker.close();
+            });
+            picker.querySelector('[data-cancel]').onclick = () => picker.close();
+            picker.addEventListener('close', () => { picker.remove(); field.focus(); });
+            picker.showModal();
+        }
+
+        function reopenDeliveryMessage(id) {
+            const sale = appState.sales.find(s => s.id === id);
+            if (sale) openDeliveryMessage(sale);
+        }
+
         function buildDeliveryMessage(sale) {
             const date = new Date(sale.deliveryDate + 'T12:00:00');
             const day = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
             const weekday = date.toLocaleDateString('pt-BR', { weekday: 'long' });
-            const items = sale.items.map(item => item.qty + (item.isMeter ? ' m de ' : ' ') + item.name).join('; ');
+            const items = sale.items.map(item => item.qty + (item.isMeter ? ' m de ' : ' ') + item.name).join('\n📦 Serviço: ');
             const payments = (sale.payments || []).filter(p => Number(p.amount) > 0);
             const paymentLabel = payment => {
                 const method = payment.method || 'Forma não informada';
@@ -6439,7 +6473,7 @@
                     <textarea id="delivery-message" aria-label="Mensagem de agendamento" rows="9" class="w-full p-3 rounded-xl border bg-slate-50 dark:bg-slate-700 dark:text-white text-base">${escapeHtml(buildDeliveryMessage(sale))}</textarea>
                     ${validPhone ? '<button id="delivery-whatsapp" class="w-full mt-3 p-3 rounded-xl bg-green-600 text-white font-bold">Enviar para o cliente no WhatsApp</button>' : '<p class="text-sm text-amber-600 mt-3">Cadastre o telefone do cliente com DDD para abrir o WhatsApp. O agendamento já foi salvo.</p>'}
                     <button id="delivery-whatsapp-other" class="w-full mt-2 p-3 rounded-xl border border-green-600 text-green-700 dark:text-green-400 font-bold">Escolher outro contato no WhatsApp</button>
-                    <button onclick="closeModal()" class="w-full mt-2 p-3 rounded-xl bg-slate-100 dark:bg-slate-700 dark:text-white">Fechar</button>
+                    <button onclick="closeModal(); switchVendasTab('entregas')" class="w-full mt-2 p-3 rounded-xl bg-slate-100 dark:bg-slate-700 dark:text-white">Voltar às entregas</button>
                 </div>
             `);
             document.getElementById('delivery-whatsapp-other').onclick = () => {
