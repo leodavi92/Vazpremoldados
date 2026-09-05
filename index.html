@@ -5611,6 +5611,14 @@
             };
 
             window.finalizeCompleteSale = (sId) => {
+                if (sale.status !== 'pending' || sale.id !== sId) {
+                    showToast('Este pedido já foi finalizado ou não está mais pendente.', 'error'); return;
+                }
+                const paymentError = paymentValidationError(sale.total, finalizePayments);
+                if (paymentError) { showToast(paymentError, 'error'); return; }
+                if (!Number.isFinite(finalizeHelperAdjustment) || finalizeHelperAdjustment < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(finalizeDate)) {
+                    showToast('Confira a data e o valor do ajudante.', 'error'); return;
+                }
                 const finalDate = finalizeDate;
                 const helperName = finalizeHelperName.trim();
                 const finalHelperCost = finalizeHelperAdjustment;
@@ -6324,8 +6332,28 @@
         }
 
 
+        function paymentValidationError(total, payments, required = true) {
+            if (!Number.isFinite(total) || total <= 0) return 'O total da venda deve ser maior que zero.';
+            if (!Array.isArray(payments)) return 'Confira as formas de pagamento.';
+            if (!payments.length) return required ? 'Informe a forma e o valor do pagamento.' : '';
+            if (payments.some(p => !p || typeof p.method !== 'string' || !p.method.trim() || !Number.isFinite(p.amount) || p.amount <= 0)) return 'Cada pagamento deve ter uma forma e um valor maior que zero.';
+            if (payments.some(p => p.method === 'Cartão de Crédito' && (!Number.isInteger(p.installments ?? 1) || (p.installments ?? 1) < 1 || (p.installments ?? 1) > 12))) return 'Escolha de 1 a 12 parcelas para o cartão.';
+            const cents = payments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0);
+            if (cents !== Math.round(total * 100)) return 'A soma dos pagamentos precisa ser igual ao total da venda.';
+            return '';
+        }
+
         function confirmSale(total, status = 'completed') {
             if (currentCart.length === 0) return;
+            if (currentCart.some(item => !Number.isFinite(item.qty) || item.qty <= 0 || !Number.isFinite(item.price) || item.price < 0) || !Number.isFinite(pdvDiscount) || pdvDiscount < 0) {
+                showToast('Confira as quantidades, preços e desconto da venda.', 'error'); return;
+            }
+            const expectedTotal = currentCart.reduce((sum, item) => sum + item.qty * item.price, 0) - pdvDiscount;
+            if (!Number.isFinite(total) || Math.round(total * 100) !== Math.round(expectedTotal * 100)) {
+                showToast('O total mudou. Volte ao carrinho e confira a venda.', 'error'); return;
+            }
+            const paymentError = paymentValidationError(total, pdvPayments, status === 'completed');
+            if (paymentError) { showToast(paymentError, 'error'); return; }
             if (status === 'pending') {
                 if (!deliveryTimeSlots().includes(document.getElementById('pdv-delivery-time').value)) { openDeliveryTimePicker(); return; }
                 for (const id of ['pdv-delivery-date', 'pdv-delivery-time']) {
