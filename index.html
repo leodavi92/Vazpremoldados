@@ -6148,10 +6148,11 @@
                         <div id="pdv-delivery-date-container" class="space-y-1 pt-4 border-t border-slate-100 dark:border-slate-700">
                             <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Data Prevista de Entrega</label>
                             <input type="date" id="pdv-delivery-date" value="${localDate(new Date(Date.now() + 86400000))}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 text-sm font-bold">
-                            <label for="pdv-delivery-time" class="block text-xs text-slate-500 pt-2">Horário previsto</label>
-                            <input type="time" id="pdv-delivery-time" class="w-full min-w-0 p-3 bg-slate-50 dark:bg-slate-700 border rounded-xl text-base">
-                            <label for="pdv-delivery-card-price" class="block text-xs text-slate-500 pt-2">Valor alternativo no cartão (opcional, para a mensagem)</label>
-                            <input type="number" id="pdv-delivery-card-price" min="0.01" step="0.01" placeholder="Ex.: 1800,00" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border rounded-xl text-base">
+                            <div class="p-4 rounded-2xl bg-primary-50 dark:bg-slate-800 border border-primary-100 dark:border-slate-600 mt-3">
+                                <label for="pdv-delivery-time" class="flex items-center gap-2 text-sm font-bold text-primary-700 dark:text-primary-300 mb-3"><i data-lucide="clock" class="w-5 h-5"></i> Horário previsto</label>
+                                <input type="time" id="pdv-delivery-time" aria-describedby="delivery-time-hint" class="block w-full min-w-0 min-h-[52px] p-3 bg-white dark:bg-slate-700 dark:text-white border border-primary-200 dark:border-slate-600 rounded-xl text-lg font-semibold outline-none focus:ring-2 focus:ring-primary-500">
+                                <p id="delivery-time-hint" class="text-xs text-slate-500 dark:text-slate-400 mt-2">Toque para escolher a hora da entrega.</p>
+                            </div>
                             <p class="text-xs text-slate-400">Data e horário são necessários para agendar.</p>
                         </div>
                     </div>
@@ -6287,7 +6288,6 @@
                     field.required = true;
                     if (!field.reportValidity()) return;
                 }
-                if (!document.getElementById('pdv-delivery-card-price').reportValidity()) return;
             }
             let saleId;
             do { saleId = Math.floor(100000 + Math.random() * 900000); }
@@ -6301,7 +6301,6 @@
                 date: localDate(),
                 deliveryDate: status === 'pending' ? document.getElementById('pdv-delivery-date').value : null,
                 deliveryTime: status === 'pending' ? document.getElementById('pdv-delivery-time').value : null,
-                deliveryCardPrice: status === 'pending' ? Number(document.getElementById('pdv-delivery-card-price').value) || null : null,
                 items: currentCart.map(i => ({ ...i })),
                 total: total,
                 payments: pdvPayments.map(p => ({ ...p })), // Armazena múltiplos pagamentos
@@ -6413,8 +6412,19 @@
             const day = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
             const weekday = date.toLocaleDateString('pt-BR', { weekday: 'long' });
             const items = sale.items.map(item => item.qty + (item.isMeter ? ' m de ' : ' ') + item.name).join('; ');
-            const value = sale.deliveryCardPrice ? formatCurrency(sale.total) + ' à vista ou ' + formatCurrency(sale.deliveryCardPrice) + ' no cartão' : formatCurrency(sale.total);
-            return 'Agendamento confirmado ✅\n\n📅 Data: ' + day + ' ' + weekday + '\n⏰ Horário: ' + sale.deliveryTime + '\n📦 Serviço: ' + items + '\n💰 Valor: ' + value + '\n\nQualquer imprevisto ou necessidade de ajuste, fico à disposição.';
+            const payments = (sale.payments || []).filter(p => Number(p.amount) > 0);
+            const paymentLabel = payment => {
+                const method = payment.method || 'Forma não informada';
+                return method === 'Cartão de Crédito' ? method + ' em ' + (Number(payment.installments) || 1) + 'x' : method;
+            };
+            const paymentText = payments.length === 1 ? paymentLabel(payments[0])
+                : payments.length > 1 ? payments.map(p => formatCurrency(p.amount) + ' no ' + paymentLabel(p)).join(' + ')
+                : 'Forma de pagamento a combinar';
+            const value = formatCurrency(sale.total) + ' — ' + paymentText;
+            const hour = Number(String(sale.deliveryTime || '').split(':')[0]);
+            const period = hour < 6 ? 'da madrugada' : hour < 12 ? 'da manhã' : hour < 18 ? 'da tarde' : 'da noite';
+            const time = sale.deliveryTime ? sale.deliveryTime + ' ' + period : 'A combinar';
+            return 'Agendamento confirmado ✅\n\n📅 Data: ' + day + ' ' + weekday + '\n⏰ Horário: ' + time + '\n📦 Serviço: ' + items + '\n💰 Valor: ' + value + '\n\nQualquer imprevisto ou necessidade de ajuste, fico à disposição.';
         }
 
         function openDeliveryMessage(sale) {
@@ -6428,9 +6438,14 @@
                     <p class="text-sm text-slate-500 mt-2 mb-3">Confira a mensagem para ${escapeHtml(sale.clientName)} antes de abrir o WhatsApp.</p>
                     <textarea id="delivery-message" aria-label="Mensagem de agendamento" rows="9" class="w-full p-3 rounded-xl border bg-slate-50 dark:bg-slate-700 dark:text-white text-base">${escapeHtml(buildDeliveryMessage(sale))}</textarea>
                     ${validPhone ? '<button id="delivery-whatsapp" class="w-full mt-3 p-3 rounded-xl bg-green-600 text-white font-bold">Enviar para o cliente no WhatsApp</button>' : '<p class="text-sm text-amber-600 mt-3">Cadastre o telefone do cliente com DDD para abrir o WhatsApp. O agendamento já foi salvo.</p>'}
+                    <button id="delivery-whatsapp-other" class="w-full mt-2 p-3 rounded-xl border border-green-600 text-green-700 dark:text-green-400 font-bold">Escolher outro contato no WhatsApp</button>
                     <button onclick="closeModal()" class="w-full mt-2 p-3 rounded-xl bg-slate-100 dark:bg-slate-700 dark:text-white">Fechar</button>
                 </div>
             `);
+            document.getElementById('delivery-whatsapp-other').onclick = () => {
+                const message = document.getElementById('delivery-message').value;
+                window.open('https://wa.me/?text=' + encodeURIComponent(message), '_blank', 'noopener,noreferrer');
+            };
             if (validPhone) document.getElementById('delivery-whatsapp').onclick = () => {
                 const message = document.getElementById('delivery-message').value;
                 window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(message), '_blank', 'noopener,noreferrer');
