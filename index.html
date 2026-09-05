@@ -1210,9 +1210,17 @@
                 await auth.signInWithEmailAndPassword(email, password);
                 document.getElementById('login-password').value = '';
             } catch (err) {
-                setLoginError(err.code === 'auth/network-request-failed'
-                    ? 'Sem conexão. Conecte-se à internet para entrar.'
-                    : 'Não foi possível entrar. Confira seu e-mail e sua senha.');
+                const messages = {
+                    'auth/network-request-failed': 'Sem conexão. Conecte-se à internet para entrar.',
+                    'auth/invalid-login-credentials': 'E-mail ou senha não conferem com o cadastro do Firebase.',
+                    'auth/invalid-credential': 'E-mail ou senha não conferem com o cadastro do Firebase.',
+                    'auth/wrong-password': 'A senha não confere com o cadastro do Firebase.',
+                    'auth/user-not-found': 'Este e-mail não está cadastrado no Firebase.',
+                    'auth/too-many-requests': 'Muitas tentativas. Aguarde alguns minutos antes de tentar novamente.',
+                    'auth/operation-not-allowed': 'O login por e-mail e senha precisa ser ativado no Firebase.',
+                    'auth/invalid-api-key': 'A configuração de acesso do app é inválida.'
+                };
+                setLoginError((messages[err.code] || 'Não foi possível entrar.') + ' Código: ' + (err.code || 'indisponível'));
                 setLoginBusy(false);
             }
         };
