@@ -3930,15 +3930,17 @@
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
                     </div>
-                    <form id="client-form" class="space-y-4">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <form id="client-form" class="space-y-4" novalidate>
+                        <p id="client-step-title" class="text-sm font-semibold text-primary-600 dark:text-primary-400" aria-live="polite" tabindex="-1"></p>
+                        <div class="h-2 rounded-full bg-slate-100 dark:bg-slate-700" aria-hidden="true"><div id="client-step-progress" class="h-2 rounded-full bg-primary-600 transition-all"></div></div>
+                        <div data-client-step class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div class="md:col-span-2">
                                 <label class="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Nome / Razão Social *</label>
-                                <input type="text" id="c-name" required value="${client?.name || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <input type="text" id="c-name" required value="${escapeHtml(client?.name || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">CPF / CNPJ (Opcional)</label>
-                                <input type="text" id="c-tax" value="${client?.taxId || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <input type="text" inputmode="numeric" id="c-tax" value="${escapeHtml(client?.taxId || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Tipo</label>
@@ -3947,60 +3949,105 @@
                                     <option value="PJ" ${client?.type === 'PJ' ? 'selected' : ''}>Pessoa Jurídica</option>
                                 </select>
                             </div>
+                        </div>
+                        <div data-client-step class="grid grid-cols-1 md:grid-cols-2 gap-4" hidden>
                             <div>
                                 <label class="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Telefone</label>
-                                <input type="text" id="c-phone" value="${client?.phone || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <input type="tel" autocomplete="tel" id="c-phone" value="${escapeHtml(client?.phone || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">E-mail</label>
-                                <input type="email" id="c-mail" value="${client?.email || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
+                                <input type="email" id="c-mail" value="${escapeHtml(client?.email || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                             </div>
                             
+                        </div>
+                        <div data-client-step class="grid grid-cols-1 md:grid-cols-2 gap-4" hidden>
                             <!-- Endereço Detalhado -->
                             <div class="md:col-span-2 pt-2 border-t border-slate-100 dark:border-slate-700">
                                 <h4 class="text-xs font-black text-slate-400 uppercase tracking-wider mb-3">Endereço de Entrega</h4>
                             </div>
                             <div class="md:col-span-1">
                                 <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Rua / Logradouro</label>
-                                <input type="text" id="c-street" value="${client?.street || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
+                                <input type="text" id="c-street" value="${escapeHtml(client?.street || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
                             </div>
                             <div class="grid grid-cols-2 gap-2">
                                 <div>
                                     <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Quadra</label>
-                                    <input type="text" id="c-block" value="${client?.block || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
+                                    <input type="text" id="c-block" value="${escapeHtml(client?.block || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
                                 </div>
                                 <div>
                                     <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Número</label>
-                                    <input type="text" id="c-number" value="${client?.number || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
+                                    <input type="text" id="c-number" value="${escapeHtml(client?.number || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
                                 </div>
                             </div>
                             <div>
                                 <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Bairro</label>
-                                <input type="text" id="c-neighbor" value="${client?.neighborhood || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
+                                <input type="text" id="c-neighbor" value="${escapeHtml(client?.neighborhood || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
                             </div>
                             <div>
                                 <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Cidade</label>
-                                <input type="text" id="c-city" value="${client?.city || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
+                                <input type="text" id="c-city" value="${escapeHtml(client?.city || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
                             </div>
                             <div>
                                 <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Estado</label>
-                                <input type="text" id="c-state" maxlength="2" placeholder="EX: SP" value="${client?.state || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm uppercase">
+                                <input type="text" id="c-state" maxlength="2" placeholder="EX: SP" value="${escapeHtml(client?.state || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm uppercase">
                             </div>
                             <div class="md:col-span-2">
                                 <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Ponto de Referência</label>
-                                <input type="text" id="c-ref" placeholder="Ex: Próximo ao mercado X" value="${client?.reference || ''}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
+                                <input type="text" id="c-ref" placeholder="Ex: Próximo ao mercado X" value="${escapeHtml(client?.reference || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
                             </div>
                         </div>
-                        <div class="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-700">
-                            <button type="button" onclick="closeModal()" class="px-6 py-2 rounded-xl border border-slate-200 dark:border-slate-700 font-semibold hover:bg-slate-50 dark:hover:bg-slate-700">Cancelar</button>
-                            <button type="submit" class="px-6 py-2 rounded-xl bg-primary-600 text-white font-semibold hover:bg-primary-700 shadow-lg transition-all active:scale-95">Salvar Cliente</button>
+                        <div class="sticky bottom-0 flex gap-3 py-4 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700">
+                            <button id="client-back" type="button" class="flex-1 min-h-[48px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 font-semibold dark:text-white">Voltar</button>
+                            <button id="client-next" type="submit" class="flex-1 min-h-[48px] px-4 rounded-xl bg-primary-600 text-white font-semibold">Próximo</button>
                         </div>
                     </form>
                 </div>
             `;
             openModal(html);
+            const form = document.getElementById('client-form');
+            const steps = [...form.querySelectorAll('[data-client-step]')];
+            const titles = ['Dados do cliente', 'Contato (opcional)', 'Endereço de entrega (opcional)'];
+            let step = 0;
+            const showStep = (focus = true) => {
+                steps.forEach((panel, index) => {
+                    panel.hidden = index !== step;
+                    panel.style.display = index === step ? '' : 'none';
+                });
+                const heading = document.getElementById('client-step-title');
+                heading.textContent = 'Etapa ' + (step + 1) + ' de 3 · ' + titles[step];
+                document.getElementById('client-step-progress').style.width = ((step + 1) / 3 * 100) + '%';
+                document.getElementById('client-back').textContent = step === 0 ? 'Cancelar' : 'Voltar';
+                document.getElementById('client-next').textContent = step === 2 ? 'Salvar cliente' : 'Próximo';
+                if (focus) heading.focus();
+            };
+            form.querySelectorAll('input, select').forEach(field => {
+                field.style.fontSize = '16px';
+                field.style.minHeight = '48px';
+                const label = field.parentElement.querySelector('label');
+                if (label) label.htmlFor = field.id;
+            });
+            document.getElementById('client-back').onclick = () => {
+                if (step === 0) { closeModal(); return; }
+                step--;
+                showStep();
+            };
+            showStep(false);
             document.getElementById('client-form').onsubmit = (e) => {
                 e.preventDefault();
+                const nameField = document.getElementById('c-name');
+                nameField.setCustomValidity(nameField.value.trim() ? '' : 'Informe o nome do cliente.');
+                const panelsToValidate = step === 2 ? steps : [steps[step]];
+                for (const panel of panelsToValidate) {
+                    const invalid = [...panel.querySelectorAll('input, select')].find(field => !field.checkValidity());
+                    if (invalid) {
+                        step = steps.indexOf(panel);
+                        showStep(false);
+                        invalid.reportValidity();
+                        return;
+                    }
+                }
+                if (step < 2) { step++; showStep(); return; }
                 
                 const street = document.getElementById('c-street').value;
                 const block = document.getElementById('c-block').value;
