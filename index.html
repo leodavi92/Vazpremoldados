@@ -197,6 +197,8 @@
                 page-break-after: auto;
             }
         }
+        #modal-content { max-width: calc(100vw - 24px); max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain; }
+        @media (max-width: 480px) { #modal-content input, #modal-content select, #modal-content textarea { max-width: 100%; min-width: 0; font-size: 16px; } #modal-content .p-8 { padding: 1rem; } }
     </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 min-h-screen">
@@ -664,6 +666,19 @@
             } catch (err) { showToast('Não foi possível recuperar: ' + err.message, 'error'); }
         }
 
+        function preserveLocalBackup() {
+            try {
+                const previous = localStorage.getItem(dataStorageKey);
+                if (!previous) return;
+                const key = dataStorageKey + '-backups';
+                const backups = JSON.parse(localStorage.getItem(key) || '[]');
+                const day = localDate();
+                if (backups.some(b => b.day === day)) return;
+                backups.unshift({ day, data: previous });
+                localStorage.setItem(key, JSON.stringify(backups.slice(0, 5)));
+            } catch (_) { /* The main save reports quota failures independently. */ }
+        }
+
         let saveOutcome = null;
         function saveData() {
             saveOutcome = 'saving';
@@ -671,6 +686,7 @@
             try {
                 // Persist the pending marker first: a reload must not silently discard local edits.
                 localStorage.setItem(pendingKey, JSON.stringify({ baseline: cloudBaseline ?? null }));
+                preserveLocalBackup();
                 localStorage.setItem(dataStorageKey, JSON.stringify(appState));
                 pendingCloudSave = true;
                 saveOutcome = 'local';
@@ -681,7 +697,6 @@
                 return Promise.resolve(false);
             }
             if (!firebaseReady || !db || !cloudSyncEnabled) {
-                setSaveStatus('Salvo neste aparelho. Sincronização com a nuvem indisponível.', true);
                 return Promise.resolve(false);
             }
             return syncLocalChanges();
@@ -746,7 +761,7 @@
             
             const monthlySales = (appState.sales || []).filter(s => {
                 const isAfterStart = s.date >= resetDateStr;
-                const isBeforeEnd = endDateStr ? s.date <= endDateStr : true;
+                const isBeforeEnd = s.date <= (endDateStr || getBreakEvenConfig().endDateStr);
                 return isAfterStart && isBeforeEnd && s.status === 'completed';
             });
             
@@ -957,7 +972,7 @@
                                     <span class="text-xs font-black text-slate-300 w-4">${idx + 1}</span>
                                     <div class="flex-1">
                                         <div class="flex justify-between items-center mb-1">
-                                            <span class="text-xs font-bold dark:text-white truncate max-w-[150px]">${p.name}</span>
+                                            <span class="text-xs font-bold dark:text-white truncate max-w-[150px]">${escapeHtml(p.name)}</span>
                                             <span class="text-xs font-black text-slate-900 dark:text-white">${formatCurrency(p.total)}</span>
                                         </div>
                                         <div class="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
@@ -980,7 +995,7 @@
                             ${cycleSales.map(s => `
                                 <div class="p-3 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl flex justify-between items-center">
                                     <div>
-                                        <p class="text-[11px] font-bold dark:text-white">${s.clientName}</p>
+                                        <p class="text-[11px] font-bold dark:text-white">${escapeHtml(s.clientName)}</p>
                                         <p class="text-[9px] text-slate-400">${formatDate(s.date)}</p>
                                     </div>
                                     <p class="text-xs font-black text-green-600">${formatCurrency(s.total)}</p>
@@ -1024,74 +1039,23 @@
         }
 
         /**
-         * Gerencia o ciclo de 30 dias do ponto de equilíbrio.
+         * Calcula o mês selecionado sem modificar o histórico.
          * Retorna as informações do ciclo atual e realiza o reset automático se necessário.
          */
+        let selectedReportMonth = '';
         function getBreakEvenConfig() {
             const now = new Date();
-            // Data de hoje em formato YYYY-MM-DD local
-            const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-            const currentMonth = todayStr.substring(0, 7);
-            
-            if (!appState.config) appState.config = {};
-            
-            // Inicialização segura se não existir
-            if (!appState.config.breakEvenResetDate) {
-                appState.config.breakEvenResetDate = currentMonth + '-01';
-                saveData();
-            }
+            const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(selectedReportMonth) ? selectedReportMonth : localDate(now).slice(0, 7);
+            const [year, number] = month.split('-').map(Number);
+            const daysInMonth = new Date(year, number, 0).getDate();
+            const todayStr = localDate(now);
+            const daysElapsed = month < todayStr.slice(0,7) ? daysInMonth : month > todayStr.slice(0,7) ? 0 : now.getDate();
+            return { resetDateStr: month + '-01', endDateStr: month + '-' + daysInMonth, daysElapsed, daysInMonth, todayStr };
+        }
 
-            // Parse das datas garantindo que usamos a parte local
-            const [y1, m1, d1] = appState.config.breakEvenResetDate.split('-').map(Number);
-            const [y2, m2, d2] = todayStr.split('-').map(Number);
-            
-            const date1 = new Date(y1, m1 - 1, d1);
-            const date2 = new Date(y2, m2 - 1, d2);
-            
-            // Se date1 for inválida, resetar para hoje
-            if (isNaN(date1.getTime())) {
-                appState.config.breakEvenResetDate = todayStr;
-                saveData();
-                return getBreakEvenConfig();
-            }
-
-            const diffTime = date2.getTime() - date1.getTime();
-            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-            let daysElapsed = diffDays + 1;
-
-            // Reset automático após 30 dias (no 31º dia)
-            if (daysElapsed > 30) {
-                // Arquivar o ciclo que está terminando antes de resetar
-                archiveCurrentCycle();
-
-                appState.config.breakEvenResetDate = todayStr;
-                saveData();
-                daysElapsed = 1;
-                
-                // Recalcular com a nova data de hoje
-                const endObj = new Date(y2, m2 - 1, d2);
-                endObj.setDate(endObj.getDate() + 29);
-                const endDateStr = endObj.getFullYear() + '-' + String(endObj.getMonth() + 1).padStart(2, '0') + '-' + String(endObj.getDate()).padStart(2, '0');
-                
-                return {
-                    resetDateStr: todayStr,
-                    endDateStr,
-                    daysElapsed: 1,
-                    todayStr
-                };
-            }
-
-            const resetDateStr = appState.config.breakEvenResetDate;
-            const endObj = new Date(date1);
-            endObj.setDate(date1.getDate() + 29);
-            const endDateStr = endObj.getFullYear() + '-' + String(endObj.getMonth() + 1).padStart(2, '0') + '-' + String(endObj.getDate()).padStart(2, '0');
-
-            return {
-                resetDateStr,
-                endDateStr,
-                daysElapsed,
-                todayStr
-            };
+        function selectReportMonth(month) {
+            selectedReportMonth = month;
+            renderContent();
         }
 
         function showToast(message, type = 'success') {
@@ -1424,10 +1388,7 @@
             renderContent();
         }
 
-        function switchVendasTab(subTabId) {
-            vendasSubTab = subTabId;
-            renderVendas();
-        }
+
 
         function resetBreakEven() {
             confirmResetBreakEven();
@@ -1517,7 +1478,7 @@
 
             // Cálculo de Necessidade de Produção (PCP)
             const pcpNeeds = {};
-            (appState.sales || []).filter(s => s.status === 'pending').forEach(sale => {
+            (appState.sales || []).filter(s => s.status !== 'cancelled' && saleDeliveryState(s) !== 'delivered').forEach(sale => {
                 (sale.items || []).forEach(item => {
                     if (!item.productId) return;
                     if (!pcpNeeds[item.productId]) {
@@ -1572,7 +1533,7 @@
                             ${pcpAlerts.map(alert => `
                                 <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-orange-100 dark:border-orange-800/50 flex flex-col">
                                     <div class="flex justify-between items-start mb-2">
-                                        <span class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter">${alert.name}</span>
+                                        <span class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter">${escapeHtml(alert.name)}</span>
                                         <span class="px-2 py-0.5 bg-orange-100 text-orange-700 text-[8px] font-black rounded-full uppercase">Falta</span>
                                     </div>
                                     <div class="flex justify-between text-[10px] mb-4">
@@ -1604,9 +1565,7 @@
                         </h4>
                         <div class="flex items-center gap-3">
                             <span class="text-[10px] font-black text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-3 py-1 rounded-full uppercase tracking-tighter">Total: ${totalMonthly} un</span>
-                            <button onclick="confirmResetBreakEven()" class="p-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-red-500 hover:text-white rounded-lg transition-all" title="Reiniciar Ciclo">
-                                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
-                            </button>
+                            <label class="text-xs text-slate-500">Mês <input type="month" value="${getBreakEvenConfig().resetDateStr.slice(0,7)}" onchange="selectReportMonth(this.value)" class="p-2 rounded-lg border bg-white dark:bg-slate-800 dark:text-white"></label>
                         </div>
                     </div>
                     <div class="p-4 sm:p-6">
@@ -1627,7 +1586,7 @@
                                                     <div class="w-6 h-6 rounded-lg ${index === 0 ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 dark:bg-slate-700 text-slate-500'} flex items-center justify-center text-[10px] font-black">
                                                         ${index + 1}º
                                                     </div>
-                                                    <span class="text-xs font-black text-slate-700 dark:text-slate-200 uppercase tracking-tighter">${p.name}</span>
+                                                    <span class="text-xs font-black text-slate-700 dark:text-slate-200 uppercase tracking-tighter">${escapeHtml(p.name)}</span>
                                                 </div>
                                                 <div class="text-right">
                                                     <span class="text-xs font-black text-slate-900 dark:text-white">${p.qty} <span class="text-[9px] text-slate-400 uppercase">un</span></span>
@@ -1711,7 +1670,7 @@
                             <div class="flex flex-wrap gap-1.5">
                                 ${p.materials.map(m => `
                                     <span class="text-[9px] font-bold px-2.5 py-1 bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 rounded-full border border-slate-100 dark:border-slate-600">
-                                        ${m.name}: <b class="text-slate-900 dark:text-white">${m.qty.toFixed(2)}</b>
+                                        ${escapeHtml(m.name)}: <b class="text-slate-900 dark:text-white">${m.qty.toFixed(2)}</b>
                                     </span>
                                 `).join('')}
                             </div>
@@ -1742,7 +1701,7 @@
                             <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Produto a Fabricar</label>
                             <select id="prod-product" required class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm appearance-none">
                                 <option value="">Selecione o pré-moldado...</option>
-                                ${finalProducts.map(p => `<option value="${p.id}" ${preSelectedId == p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
+                                ${finalProducts.map(p => `<option value="${p.id}" ${preSelectedId == p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
                             </select>
                         </div>
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1791,7 +1750,7 @@
                         const isShort = material.stock < totalNeeded;
                         return `
                             <li class="flex justify-between items-center ${isShort ? 'text-danger' : 'text-slate-600 dark:text-slate-400'}">
-                                <span class="text-xs font-bold uppercase tracking-tight">${material.name}</span>
+                                <span class="text-xs font-bold uppercase tracking-tight">${escapeHtml(material.name)}</span>
                                 <span class="text-xs font-black ${isShort ? 'text-danger' : 'text-slate-900 dark:text-white'}">
                                     ${totalNeeded.toFixed(2)} ${material.unit}
                                     ${isShort ? '<br><span class="text-[8px] uppercase tracking-tighter">Estoque Insuficiente!</span>' : ''}
@@ -2001,7 +1960,7 @@
 
             // Gastos reais desde o último reset (apenas para exibição no card)
             const actualExpenses = (appState.transactions || [])
-                .filter(t => t.type === 'saida' && t.date >= resetDateStr)
+                .filter(t => t.type === 'saida' && t.date >= resetDateStr && t.date <= endDateStr)
                 .reduce((acc, t) => acc + (t.amount || 0), 0);
 
             const isBreakEvenReached = data.isReached;
@@ -2043,15 +2002,13 @@
                                 <div class="flex items-center gap-2">
                                     <span class="text-[9px] font-black uppercase text-slate-400 bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded-lg">Ciclo: ${formatDate(resetDateStr)}</span>
                                     <span class="text-[9px] font-black uppercase text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-2 py-1 rounded-lg">Reset: ${formatDate(endDateStr)}</span>
-                                    <button onclick="resetBreakEven()" class="p-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-red-500 hover:text-white rounded-lg transition-all" title="Zerar Ciclo">
-                                        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
-                                    </button>
+                                    <label class="text-xs text-slate-500">Mês <input type="month" value="${getBreakEvenConfig().resetDateStr.slice(0,7)}" onchange="selectReportMonth(this.value)" class="p-2 rounded-lg border bg-white dark:bg-slate-800 dark:text-white"></label>
                                 </div>
                             </div>
                             <div class="mb-3 flex items-center gap-2">
                                 <span class="text-[9px] font-black uppercase text-slate-400">Dia ${daysElapsed}/30</span>
                                 <div class="h-1.5 w-20 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                                    <div class="h-1.5 bg-primary-500" style="width: ${Math.min(100, (daysElapsed / 30) * 100)}%"></div>
+                                    <div class="h-1.5 bg-primary-500" style="width: ${Math.min(100, (daysElapsed / getBreakEvenConfig().daysInMonth) * 100)}%"></div>
                                 </div>
                             </div>
                             <div class="relative h-4 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden mb-3">
@@ -2099,7 +2056,7 @@
                                                     <i data-lucide="user" class="w-4 h-4"></i>
                                                 </div>
                                                 <div>
-                                                    <p class="text-xs font-bold text-slate-900 dark:text-white truncate max-w-[100px]">${s.clientName}</p>
+                                                    <p class="text-xs font-bold text-slate-900 dark:text-white truncate max-w-[100px]">${escapeHtml(s.clientName)}</p>
                                                     <p class="text-[9px] text-slate-500">${formatDate(s.date)}</p>
                                                 </div>
                                             </div>
@@ -2112,7 +2069,7 @@
                     </div>
                 `;
             } else if (dashboardSubTab === 'financeiro') {
-                const pendingReceivables = appState.sales.filter(s => s.status === 'pending').reduce((acc, s) => acc + s.total, 0);
+                const pendingReceivables = appState.sales.filter(s => s.status === 'pending').reduce((acc, s) => acc + saleBalance(s), 0);
                 const salesGoal = appState.config.salesGoal || 100000;
                 const salesGoalProgress = Math.min(100, (totalRevenue / salesGoal) * 100);
                 const isSalesGoalReached = totalRevenue >= salesGoal;
@@ -2169,7 +2126,7 @@
                                     ${appState.sales.filter(s => s.status === 'pending').map(s => `
                                         <div class="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-900/10 rounded-2xl border border-orange-100 dark:border-orange-900/30">
                                             <div>
-                                                <p class="text-xs font-bold text-slate-900 dark:text-white">${s.clientName}</p>
+                                                <p class="text-xs font-bold text-slate-900 dark:text-white">${escapeHtml(s.clientName)}</p>
                                                 <p class="text-[9px] text-orange-600">Previsão: ${s.deliveryDate ? formatDate(s.deliveryDate) + (s.deliveryTime ? ' às ' + escapeHtml(s.deliveryTime) : '') : 'Não definida'}</p>
                                             </div>
                                             <p class="text-xs font-black text-orange-600">${formatCurrency(s.total)}</p>
@@ -2194,7 +2151,7 @@
                                                     <i data-lucide="${isPaid ? 'check-circle' : 'clock'}" class="w-4 h-4"></i>
                                                 </div>
                                                 <div>
-                                                    <p class="text-[11px] font-bold text-slate-900 dark:text-white truncate max-w-[80px]">${acc.description}</p>
+                                                    <p class="text-[11px] font-bold text-slate-900 dark:text-white truncate max-w-[80px]">${escapeHtml(acc.description)}</p>
                                                     <p class="text-[9px] text-slate-500">Dia ${acc.dueDay}</p>
                                                 </div>
                                             </div>
@@ -2235,7 +2192,7 @@
                                                 <i data-lucide="alert-circle" class="w-6 h-6"></i>
                                             </div>
                                             <div>
-                                                <p class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${p.name}</p>
+                                                <p class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${escapeHtml(p.name)}</p>
                                                 <p class="text-[10px] text-red-600 font-bold uppercase">Restam apenas ${p.stock} ${p.unit}</p>
                                             </div>
                                         </div>
@@ -2268,7 +2225,7 @@
                                                     <i data-lucide="${isOverdue ? 'alert-triangle' : 'clock'}" class="w-6 h-6"></i>
                                                 </div>
                                                 <div>
-                                                    <p class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${acc.description}</p>
+                                                    <p class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${escapeHtml(acc.description)}</p>
                                                     <div class="flex items-center gap-2">
                                                         <span class="text-[10px] ${isOverdue ? 'text-red-600' : 'text-amber-600'} font-black uppercase">${isOverdue ? 'ATRASADA' : 'VENCE DIA ' + acc.dueDay}</span>
                                                         <span class="w-1 h-1 bg-slate-300 rounded-full"></span>
@@ -2309,7 +2266,7 @@
                                                     <i data-lucide="settings" class="w-6 h-6"></i>
                                                 </div>
                                                 <div>
-                                                    <p class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${e.name}</p>
+                                                    <p class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${escapeHtml(e.name)}</p>
                                                     <p class="text-[10px] text-orange-600 font-bold uppercase">Manutenção em ${diffDays} dias</p>
                                                 </div>
                                             </div>
@@ -2561,18 +2518,23 @@
             filterInventory();
         }
 
+        function stockSummary(product) {
+            const reserved = appState.sales.filter(s => s.status !== 'cancelled' && saleDeliveryState(s) !== 'delivered').reduce((sum,s) => sum + (s.items || []).filter(i => i.productId === product.id).reduce((n,i) => n + i.qty,0),0);
+            return { available: Math.max(0,product.stock), reserved, toProduce: Math.max(0,-product.stock) };
+        }
         function renderInventoryCard(p) {
+            const summary = stockSummary(p);
             const isLow = p.stock <= p.minStock;
             return `
                 <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm animate-fade-in flex flex-col justify-between">
                     <div>
                         <div class="flex justify-between items-start mb-2">
                             <span class="px-2.5 py-1 bg-primary-50 dark:bg-primary-900/20 text-primary-600 text-[8px] font-black rounded-full uppercase tracking-widest border border-primary-100 dark:border-primary-800/50">
-                                ${p.category}
+                                ${escapeHtml(p.category)}
                             </span>
                             <span class="text-[9px] font-black text-slate-300 uppercase tracking-tighter">${p.code || 'S/ COD'}</span>
                         </div>
-                        <h4 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter mb-1">${p.name}</h4>
+                        <h4 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter mb-1">${escapeHtml(p.name)}</h4>
                         <p class="text-[10px] text-slate-400 font-medium line-clamp-2 mb-4 h-8">${p.description || 'Nenhuma descrição informada.'}</p>
                     </div>
 
@@ -2586,7 +2548,7 @@
                                 <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Disponível</p>
                                 <div class="flex items-center justify-end gap-1.5">
                                     <span class="text-lg font-black tracking-tighter ${isLow ? 'text-danger' : 'text-primary-600'}">
-                                        ${p.stock} <span class="text-[10px] uppercase font-bold text-slate-400">${p.unit}</span>
+                                        ${summary.available} <span class="text-[10px] uppercase font-bold text-slate-400">${escapeHtml(p.unit)}</span><p class="text-xs font-normal text-slate-500">Disponível · Reservado: ${summary.reserved} · Falta produzir: ${summary.toProduce}</p>
                                     </span>
                                     ${isLow ? '<i data-lucide="alert-triangle" class="w-4 h-4 text-danger animate-pulse"></i>' : ''}
                                 </div>
@@ -2810,7 +2772,7 @@
                         <div>
                             <select class="recipe-material w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-xs font-bold appearance-none">
                                 <option value="">Selecione...</option>
-                                ${safeMaterials.map(m => `<option value="${m.id}" ${item?.productId === m.id ? 'selected' : ''}>${m.name} (${m.unit})</option>`).join('')}
+                                ${safeMaterials.map(m => `<option value="${m.id}" ${item?.productId === m.id ? 'selected' : ''}>${escapeHtml(m.name)} (${m.unit})</option>`).join('')}
                             </select>
                         </div>
                         <div class="flex items-center gap-3">
@@ -3225,7 +3187,7 @@
                             </div>
                             <div>
                                 <p class="text-[10px] font-black text-primary-600 uppercase tracking-widest mb-0.5">Cliente</p>
-                                <h2 class="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight leading-none">${sale.clientName}</h2>
+                                <h2 class="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight leading-none">${escapeHtml(sale.clientName)}</h2>
                             </div>
                         </div>
                     </div>
@@ -3256,7 +3218,7 @@
                             ${sale.items?.map(item => `
                                 <div class="px-5 py-4">
                                     <div class="flex justify-between items-start mb-1">
-                                        <h5 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight leading-tight">${item.name}</h5>
+                                        <h5 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight leading-tight">${escapeHtml(item.name)}</h5>
                                         <span class="text-sm font-black text-primary-600">${formatCurrency(item.total)}</span>
                                     </div>
                                     <div class="flex items-center gap-3">
@@ -3319,7 +3281,7 @@
                     <div class="space-y-4 mb-8">
                         <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-2xl flex justify-between items-center">
                             <span class="text-xs font-bold text-slate-400 uppercase">Descrição</span>
-                            <span class="text-sm font-black text-slate-900 dark:text-white uppercase text-right ml-4">${t.description}</span>
+                            <span class="text-sm font-black text-slate-900 dark:text-white uppercase text-right ml-4">${escapeHtml(t.description)}</span>
                         </div>
                         <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-2xl flex justify-between items-center">
                             <span class="text-xs font-bold text-slate-400 uppercase">Data</span>
@@ -3491,7 +3453,7 @@
                                                 <i data-lucide="${isPaid ? 'check-circle' : (isOverdue ? 'alert-circle' : 'calendar-clock')}" class="w-5 h-5"></i>
                                             </div>
                                             <div>
-                                                <h4 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${acc.description}</h4>
+                                                <h4 class="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">${escapeHtml(acc.description)}</h4>
                                                 <p class="text-[10px] ${isOverdue ? 'text-red-600 font-black' : 'text-slate-500'} uppercase font-bold">
                                                     Vence dia ${acc.dueDay} • ${acc.category}
                                                 </p>
@@ -3612,11 +3574,11 @@
             const acc = appState.fixedAccounts.find(a => a.id === id);
             if (!acc) return;
 
-            if (confirm(`Deseja lançar o pagamento de ${formatCurrency(acc.amount)} para "${acc.description}"?`)) {
+            if (confirm(`Deseja lançar o pagamento de ${formatCurrency(acc.amount)} para "${escapeHtml(acc.description)}"?`)) {
                 const trans = {
                     id: Date.now(),
                     type: 'saida',
-                    description: `Pagamento Fixo: ${acc.description}`,
+                    description: `Pagamento Fixo: ${escapeHtml(acc.description)}`,
                     amount: acc.amount,
                     date: localDate(),
                     category: acc.category,
@@ -3644,7 +3606,7 @@
             return `
                 <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
                     <td class="px-6 py-4">${formatDate(t.date)}</td>
-                    <td class="px-6 py-4 font-medium">${t.description}</td>
+                    <td class="px-6 py-4 font-medium">${escapeHtml(t.description)}</td>
                     <td class="px-6 py-4">
                         <span class="px-2 py-1 ${t.type === 'entrada' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'} text-xs rounded-full">
                             ${t.category}
@@ -4155,7 +4117,7 @@
                             </div>
                             <div class="min-w-0">
                                 <p class="text-base font-black text-slate-900 dark:text-white uppercase tracking-tight">Excluir Cliente?</p>
-                                <p class="text-sm text-slate-500 mt-1">Você está prestes a excluir o cliente <b>${client.name}</b>. Esta ação não pode ser desfeita.</p>
+                                <p class="text-sm text-slate-500 mt-1">Você está prestes a excluir o cliente <b>${escapeHtml(client.name)}</b>. Esta ação não pode ser desfeita.</p>
                             </div>
                         </div>
                         
@@ -4207,7 +4169,7 @@
                                 <label class="block text-sm font-medium mb-1">Responsável</label>
                                 <select id="g-emp" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                                     <option value="">Geral (Empresa)</option>
-                                    ${appState.employees.map(e => `<option value="${e.id}">${e.name}</option>`).join('')}
+                                    ${appState.employees.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('')}
                                 </select>
                             </div>
                         </div>
@@ -4302,7 +4264,7 @@
                 </button>
                 ${results.map(c => `
                     <button onclick="setPDVClient(${c.id})" class="w-full text-left p-4 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl border border-slate-100 dark:border-slate-700 transition-colors">
-                        <p class="font-bold">${c.name}</p>
+                        <p class="font-bold">${escapeHtml(c.name)}</p>
                         <p class="text-xs text-slate-500">${c.taxId || ''}</p>
                     </button>
                 `).join('') || '<div class="py-10 text-center text-slate-400 text-sm">Nenhum cliente encontrado.</div>'}
@@ -4405,7 +4367,7 @@
                             <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Produto para Ajuste</label>
                             <select id="sm-prod" required class="w-full p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm appearance-none">
                                 <option value="">Selecione o item...</option>
-                                ${appState.inventory.map(p => `<option value="${p.id}">${p.name} (Atual: ${p.stock} ${p.unit})</option>`).join('')}
+                                ${appState.inventory.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (Atual: ${p.stock} ${p.unit})</option>`).join('')}
                             </select>
                         </div>
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -4538,7 +4500,7 @@
                             const trans = {
                                 id: Date.now() + 1,
                                 type: 'saida',
-                                description: `Compra: ${qty} ${product.unit} de ${product.name}`,
+                                description: `Compra: ${qty} ${product.unit} de ${escapeHtml(product.name)}`,
                                 amount: totalPrice,
                                 date: movement.date,
                                 category: 'Compra de Matéria-Prima',
@@ -4556,7 +4518,7 @@
                         saveData(); 
                         closeModal(); 
                         renderEstoque(); 
-                        showToast(`Estoque de ${product.name} atualizado!`);
+                        showToast(`Estoque de ${escapeHtml(product.name)} atualizado!`);
                     } catch (err) {
                         console.error("Erro ao processar ajuste de estoque:", err);
                         showToast("Erro ao processar o ajuste. Tente novamente.", "error");
@@ -4601,7 +4563,7 @@
                                 <div class="flex items-center gap-4 mb-6">
                                     <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(emp.name)}&background=random" class="w-14 h-14 rounded-full border-2 border-slate-100 dark:border-slate-700">
                                     <div>
-                                        <h4 class="font-bold text-lg dark:text-white">${emp.name}</h4>
+                                        <h4 class="font-bold text-lg dark:text-white">${escapeHtml(emp.name)}</h4>
                                         <p class="text-xs text-primary-600 font-bold uppercase tracking-wider">${emp.role} • ${emp.payCycle}</p>
                                     </div>
                                 </div>
@@ -4656,7 +4618,7 @@
             let html = `
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
-                        <h3 class="text-xl font-bold dark:text-white">Lançar Vale - ${emp.name}</h3>
+                        <h3 class="text-xl font-bold dark:text-white">Lançar Vale - ${escapeHtml(emp.name)}</h3>
                         <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
@@ -4701,7 +4663,7 @@
                     category: 'Folha de Pagamento',
                     amount: amount,
                     date: date,
-                    description: `VALE: ${emp.name} - ${desc}`,
+                    description: `VALE: ${escapeHtml(emp.name)} - ${desc}`,
                     account: 'Caixa Principal',
                     paymentMethod: 'Dinheiro'
                 });
@@ -4722,7 +4684,7 @@
             let html = `
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
-                        <h3 class="text-xl font-bold dark:text-white">Fechar Pagamento - ${emp.name}</h3>
+                        <h3 class="text-xl font-bold dark:text-white">Fechar Pagamento - ${escapeHtml(emp.name)}</h3>
                         <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
@@ -4777,7 +4739,7 @@
                     category: 'Folha de Pagamento',
                     amount: netAmount,
                     date: date,
-                    description: `PAGTO SALÁRIO: ${emp.name} (${emp.payCycle})`,
+                    description: `PAGTO SALÁRIO: ${escapeHtml(emp.name)} (${emp.payCycle})`,
                     account: 'Caixa Principal',
                     paymentMethod: 'PIX'
                 });
@@ -4797,7 +4759,7 @@
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
                         <div>
-                            <h3 class="text-xl font-bold dark:text-white">Extrato: ${emp.name}</h3>
+                            <h3 class="text-xl font-bold dark:text-white">Extrato: ${escapeHtml(emp.name)}</h3>
                             <p class="text-xs text-slate-500 uppercase font-bold">Histórico de Vales e Pagamentos</p>
                         </div>
                         <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
@@ -4832,7 +4794,7 @@
                                             <span class="px-2 py-0.5 ${typeColor} text-[9px] font-black rounded-full uppercase">${typeLabel}</span>
                                             <span class="text-xs text-slate-400 font-medium">${formatDate(h.date)}</span>
                                         </div>
-                                        <p class="text-sm font-bold text-slate-800 dark:text-slate-200">${h.description}</p>
+                                        <p class="text-sm font-bold text-slate-800 dark:text-slate-200">${escapeHtml(h.description)}</p>
                                     </div>
                                     <div class="text-right">
                                         <p class="text-sm font-black ${amountColor}">${formatCurrency(h.amount)}</p>
@@ -4947,7 +4909,7 @@
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
                         <div>
-                            <h3 class="text-xl font-bold dark:text-white">Histórico: ${client.name}</h3>
+                            <h3 class="text-xl font-bold dark:text-white">Histórico: ${escapeHtml(client.name)}</h3>
                             <p class="text-xs text-slate-500">Listagem de compras concluídas</p>
                         </div>
                         <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
@@ -5052,15 +5014,13 @@
                                         <h2 class="text-6xl font-black text-slate-900 dark:text-white tracking-tighter">${totalSalesCount}</h2>
                                         <span class="text-lg font-bold text-slate-400 uppercase tracking-widest">Vendas</span>
                                     </div>
-                                    <p class="text-[10px] text-slate-400 uppercase mt-1">Ciclo 30 dias • ${formatDate(resetDateStr)} a ${formatDate(endDateStr)}</p>
+                                    <p class="text-[10px] text-slate-400 uppercase mt-1">Resumo mensal • ${formatDate(resetDateStr)} a ${formatDate(endDateStr)}</p>
                                     <div class="flex items-center gap-2 mt-2">
                                         <p class="text-xs text-green-600 font-bold uppercase flex items-center gap-1">
                                             <i data-lucide="check-circle" class="w-3 h-3"></i>
                                             Operação ativa
                                         </p>
-                                        <button onclick="confirmResetBreakEven()" class="ml-2 p-1.5 bg-slate-50 dark:bg-slate-700 hover:bg-red-500 hover:text-white rounded-lg transition-all text-slate-400" title="Reiniciar Ciclo">
-                                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
-                                        </button>
+                                        <label class="text-xs text-slate-500">Mês <input type="month" value="${getBreakEvenConfig().resetDateStr.slice(0,7)}" onchange="selectReportMonth(this.value)" class="p-2 rounded-lg border bg-white dark:bg-slate-800 dark:text-white"></label>
                                     </div>
                                 </div>
                                 
@@ -5172,7 +5132,7 @@
         }
 
         function renderVendasEntregas() {
-            const pendingSales = appState.sales.filter(s => s.status === 'pending');
+            const pendingSales = appState.sales.filter(s => s.status !== 'cancelled' && (s.status === 'pending' || saleDeliveryState(s) !== 'delivered'));
             
             let html = `
                 <div class="animate-fade-in">
@@ -5192,7 +5152,7 @@
                                     <div class="p-5 border-b border-slate-50 dark:border-slate-700 flex justify-between items-start">
                                         <div>
                                             <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Pedido #${s.id}</p>
-                                            <h5 class="font-black text-slate-900 dark:text-white uppercase truncate max-w-[150px] leading-tight">${s.clientName}</h5>
+                                            <h5 class="font-black text-slate-900 dark:text-white uppercase truncate max-w-[150px] leading-tight">${escapeHtml(s.clientName)}</h5>
                                         </div>
                                         <div class="text-right">
                                             <p class="text-sm font-black text-primary-600">${formatCurrency(s.total)}</p>
@@ -5231,6 +5191,7 @@
 
                                     <div class="p-4 bg-slate-50 dark:bg-slate-700/50 border-t border-slate-100 dark:border-slate-700 grid grid-cols-2 gap-3">
                                         <button onclick="reopenDeliveryMessage(${Number(s.id)})" class="col-span-2 py-3 rounded-xl border border-primary-200 text-primary-600 dark:text-primary-400 font-bold text-sm">Ver agendamento / enviar mensagem</button>
+                                        <button onclick="openSaleManagement(${Number(s.id)})" class="col-span-2 p-3 rounded-xl bg-primary-600 text-white font-bold">Pagamento e entrega · falta ${formatCurrency(saleBalance(s))}</button>
                                         <button onclick="finalizePendingSale(${s.id})" class="py-3 bg-green-600 text-white font-black rounded-2xl hover:brightness-95 transition-all active:scale-95 uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-green-600/20">
                                             <i data-lucide="check-circle" class="w-4 h-4"></i> Confirmar
                                         </button>
@@ -5275,13 +5236,14 @@
                     <tr onclick="openSaleDetailsModal(${s.id})" class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors cursor-pointer group">
                         <td class="px-6 py-4 font-bold">#${s.id}</td>
                         <td class="px-6 py-4 font-medium text-slate-500">${formatDate(s.date)}</td>
-                        <td class="px-6 py-4 font-bold text-slate-900 dark:text-white uppercase tracking-tight">${s.clientName}</td>
+                        <td class="px-6 py-4 font-bold text-slate-900 dark:text-white uppercase tracking-tight">${escapeHtml(s.clientName)}</td>
                         <td class="px-6 py-4">
                             <span class="px-2 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${statusColor}">${statusLabel}</span>
                         </td>
                         <td class="px-6 py-4 text-right font-black ${isCancelled ? 'text-slate-400 line-through' : 'text-green-600'}">${formatCurrency(s.total)}</td>
                         <td class="px-6 py-4 text-right">
                             <div class="flex justify-end gap-2">
+                                <button onclick="event.stopPropagation(); openSaleManagement(${Number(s.id)})" class="p-2 text-primary-600" title="Gerenciar pedido">Gerenciar</button>
                                 <button onclick="event.stopPropagation(); reprintReceipt(${s.id})" class="p-2 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-xl transition-all group-hover:scale-110" title="Reimprimir Cupom">
                                     <i data-lucide="printer" class="w-4 h-4"></i>
                                 </button>
@@ -5295,6 +5257,7 @@
 
         function reprintReceipt(saleId) {
             const sale = appState.sales.find(s => s.id === saleId);
+            if (sale?.status === 'cancelled') { showToast('Pedido cancelado: consulte o histórico de estorno.', 'error'); return; }
             if (sale) {
                 generateReceiptPDF(sale);
                 showToast(`Recibo #${saleId} gerado com sucesso!`);
@@ -5386,7 +5349,7 @@
                                 <i data-lucide="package" class="w-5 h-5"></i>
                             </div>
                             <div class="min-w-0">
-                                <h5 class="font-black text-xs text-slate-900 dark:text-white uppercase truncate tracking-tight">${p.name}</h5>
+                                <h5 class="font-black text-xs text-slate-900 dark:text-white uppercase truncate tracking-tight">${escapeHtml(p.name)}</h5>
                                 <p class="text-[10px] font-bold ${isLowStock ? 'text-red-500' : 'text-slate-400'} uppercase">
                                     ${p.stock} ${p.unit} em estoque
                                 </p>
@@ -5411,6 +5374,8 @@
         let finalizeHelperAdjustment = 0;
 
         window.finalizePendingSale = (saleId) => {
+            const existing = appState.sales.find(s => s.id === saleId);
+            if (existing && (saleReceived(existing) > 0 || existing.status !== 'pending' || saleDeliveryState(existing) === 'delivered')) { openSaleManagement(saleId); return; }
             const sale = appState.sales.find(s => s.id === saleId);
             if (!sale) return;
 
@@ -5446,7 +5411,7 @@
                         <div class="space-y-6 animate-fade-in">
                             <div class="bg-primary-50 dark:bg-primary-900/10 p-5 rounded-3xl border border-primary-100 dark:border-primary-800/30">
                                 <p class="text-[10px] font-black text-primary-600 uppercase tracking-widest mb-1">Cliente</p>
-                                <h4 class="text-xl font-black text-slate-900 dark:text-white uppercase leading-tight">${sale.clientName}</h4>
+                                <h4 class="text-xl font-black text-slate-900 dark:text-white uppercase leading-tight">${escapeHtml(sale.clientName)}</h4>
                             </div>
 
                             <div class="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-3xl overflow-hidden shadow-sm">
@@ -5457,7 +5422,7 @@
                                     ${sale.items.map(item => `
                                         <div class="p-4 flex justify-between items-center">
                                             <div>
-                                                <p class="text-xs font-black text-slate-900 dark:text-white uppercase">${item.name}</p>
+                                                <p class="text-xs font-black text-slate-900 dark:text-white uppercase">${escapeHtml(item.name)}</p>
                                                 <p class="text-[10px] font-bold text-slate-400 uppercase">${item.qty} ${item.isMeter ? 'm' : 'un'}</p>
                                             </div>
                                             <p class="text-xs font-black text-slate-700 dark:text-slate-300">${formatCurrency(item.total)}</p>
@@ -5524,7 +5489,7 @@
                                         <tbody class="divide-y divide-slate-50 dark:divide-slate-700">
                                             ${itemsWithHelperFees.map((item, idx) => `
                                                 <tr>
-                                                    <td class="px-3 py-3 font-bold text-slate-700 dark:text-slate-200 uppercase">${item.name}</td>
+                                                    <td class="px-3 py-3 font-bold text-slate-700 dark:text-slate-200 uppercase">${escapeHtml(item.name)}</td>
                                                     <td class="px-3 py-3 text-center font-bold">${item.helperQty}</td>
                                                     <td class="px-3 py-3 text-right">
                                                         <input type="number" step="0.01" value="${item.helperFee}" 
@@ -5614,6 +5579,7 @@
                 if (sale.status !== 'pending' || sale.id !== sId) {
                     showToast('Este pedido já foi finalizado ou não está mais pendente.', 'error'); return;
                 }
+                if (saleReceived(sale) > 0) { openSaleManagement(sId); return; }
                 const paymentError = paymentValidationError(sale.total, finalizePayments);
                 if (paymentError) { showToast(paymentError, 'error'); return; }
                 if (!Number.isFinite(finalizeHelperAdjustment) || finalizeHelperAdjustment < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(finalizeDate)) {
@@ -5626,6 +5592,9 @@
                 // 1. Mark as completed
                 sale.orderDate = sale.date;
                 sale.status = 'completed';
+                sale.paymentStatus = 'paid';
+                sale.deliveryStatus = 'delivered';
+                sale.deliveredAt = finalDate;
                 sale.date = finalDate;
                 sale.fee = 0;
                 sale.payments = finalizePayments.map(p => ({ ...p }));
@@ -5650,7 +5619,7 @@
                         category: 'Venda de Pré-moldados',
                         amount: payment.amount,
                         date: finalDate,
-                        description: `Recebimento Pedido #${sId} (${payment.method}) - ${sale.clientName}`,
+                        description: `Recebimento Pedido #${sId} (${payment.method}) - ${escapeHtml(sale.clientName)}`,
                         account: 'Caixa Principal',
                         paymentMethod: payment.method
                     });
@@ -5822,52 +5791,7 @@
             }
         }
 
-        window.cancelPendingSale = (saleId) => {
-            const saleIndex = appState.sales.findIndex(s => s.id === saleId);
-            if (saleIndex === -1) return;
-            
-            const sale = appState.sales[saleIndex];
-            
-            const html = `
-                <div class="p-6 text-center">
-                    <div class="w-16 h-16 bg-red-100 dark:bg-red-900/20 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <i data-lucide="alert-triangle" class="w-8 h-8"></i>
-                    </div>
-                    <h3 class="text-xl font-black dark:text-white uppercase tracking-tight mb-2">Cancelar Entrega?</h3>
-                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-8">
-                        Tem certeza que deseja cancelar o pedido <b>#${saleId}</b>? <br>
-                        O estoque dos produtos será devolvido automaticamente.
-                    </p>
-                    <div class="grid grid-cols-2 gap-3">
-                        <button onclick="closeModal()" class="py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 font-black text-xs uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
-                            Voltar
-                        </button>
-                        <button id="confirm-cancel-sale-btn" class="py-3.5 rounded-2xl bg-red-600 text-white font-black text-xs uppercase tracking-widest hover:bg-red-700 shadow-lg shadow-red-500/20 transition-all active:scale-95">
-                            Confirmar
-                        </button>
-                    </div>
-                </div>
-            `;
-            openModal(html);
-            
-            document.getElementById('confirm-cancel-sale-btn').onclick = () => {
-                // 1. Return items to stock
-                sale.items.forEach(item => {
-                    const product = appState.inventory.find(p => p.id === item.productId);
-                    if (product) {
-                        product.stock += item.qty;
-                    }
-                });
-
-                // 2. Remove the sale
-                appState.sales.splice(saleIndex, 1);
-
-                saveData();
-                closeModal();
-                showToast('Pedido cancelado e estoque devolvido!', 'error');
-                renderVendas();
-            };
-        }
+        window.cancelPendingSale = (id) => openCancelSale(id);
 
         function addToCart(productId) {
             const product = appState.inventory.find(p => p.id === productId);
@@ -5900,9 +5824,9 @@
                 });
                 
                 if (product.stock <= 0) {
-                    showToast(`${product.name} adicionado (Sem estoque atual)`, 'warning');
+                    showToast(`${escapeHtml(product.name)} adicionado (Sob encomenda: precisa produzir)`, 'warning');
                 } else {
-                    showToast(`${product.name} adicionado!`);
+                    showToast(`${escapeHtml(product.name)} adicionado!`);
                 }
             }
             updatePDVCart();
@@ -5912,7 +5836,7 @@
             let html = `
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
-                        <h3 class="text-xl font-bold dark:text-white uppercase tracking-tight">${product.name}</h3>
+                        <h3 class="text-xl font-bold dark:text-white uppercase tracking-tight">${escapeHtml(product.name)}</h3>
                         <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
@@ -5992,7 +5916,7 @@
                 saveData();
                 closeModal();
                 updatePDVCart();
-                showToast(`${product.name} adicionado!`);
+                showToast(`${escapeHtml(product.name)} adicionado!`);
             };
         }
 
@@ -6017,7 +5941,7 @@
                     <div class="space-y-6">
                         <div class="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-100 dark:border-slate-700">
                             <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Produto</p>
-                            <p class="text-sm font-bold text-slate-900 dark:text-white uppercase">${item.name}</p>
+                            <p class="text-sm font-bold text-slate-900 dark:text-white uppercase">${escapeHtml(item.name)}</p>
                         </div>
 
                         <div>
@@ -6098,7 +6022,7 @@
                 return `
                     <div class="flex items-center justify-between p-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 group animate-fade-in shadow-sm">
                         <div class="min-w-0 flex-1">
-                            <h5 class="text-[10px] font-black text-slate-900 dark:text-white uppercase truncate tracking-tight">${item.name}</h5>
+                            <h5 class="text-[10px] font-black text-slate-900 dark:text-white uppercase truncate tracking-tight">${escapeHtml(item.name)}</h5>
                             ${item.isMeter ? `<p class="text-[9px] font-bold text-primary-600 uppercase mt-0.5">${item.units} un de ${item.lengthPerUnit}m</p>` : ''}
                             <button onclick="editCartItemPrice(${index})" class="text-[10px] font-bold text-slate-400 hover:text-primary-600 transition-colors mt-1 flex items-center gap-1">
                                 <i data-lucide="edit-3" class="w-2.5 h-2.5"></i>
@@ -6332,6 +6256,87 @@
         }
 
 
+        function nextTransactionId() { return appState.transactions.reduce((max,t) => Math.max(max, Number(t.id) || 0), Date.now()) + 1; }
+        function saleReceived(sale) {
+            return Math.max(0, appState.transactions.filter(t => t.saleId === sale.id && !t.isHelperPayment && t.category !== 'Taxas de Cartão').reduce((sum, t) => sum + (t.type === 'entrada' ? t.amount : t.isSaleRefund ? -t.amount : 0), 0));
+        }
+        function saleDeliveryState(sale) {
+            return sale.deliveryStatus || (sale.status === 'cancelled' ? 'cancelled' : sale.status === 'completed' ? 'delivered' : 'scheduled');
+        }
+        function saleBalance(sale) { return Math.max(0, Math.round((sale.total - saleReceived(sale)) * 100) / 100); }
+        function addAudit(action, saleId, details) {
+            if (!Array.isArray(appState.auditLog)) appState.auditLog = [];
+            appState.auditLog.push({ id: crypto.randomUUID(), at: new Date().toISOString(), action, saleId, details });
+        }
+        function registerSalePayment(saleId, amount, method, installments, date) {
+            const sale = appState.sales.find(s => s.id === saleId);
+            if (!sale || sale.status === 'cancelled') throw new Error('Pedido indisponível.');
+            const cents = Math.round(amount * 100);
+            if (!Number.isFinite(amount) || cents <= 0 || cents > Math.round(saleBalance(sale) * 100)) throw new Error('Informe um valor positivo que não ultrapasse o saldo a receber.');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !appState.config.paymentMethods.includes(method)) throw new Error('Confira a data e a forma de pagamento.');
+            if (method === 'Cartão de Crédito' && (!Number.isInteger(installments) || installments < 1 || installments > 12)) throw new Error('Escolha de 1 a 12 parcelas.');
+            const originalDelivery = saleDeliveryState(sale);
+            amount = cents / 100;
+            const id = nextTransactionId();
+            const account = appState.accounts[0] || 'Caixa Principal';
+            const transaction = { id, saleId, type:'entrada', category:'Venda de Pré-moldados', amount, date, account, paymentMethod:method, installments, description:'Recebimento pedido #' + saleId };
+            const feeConfig = appState.config.cardFees || {};
+            const percentage = method === 'Cartão de Crédito' ? (feeConfig.credit || []).find(f => f.installments === installments)?.fee || 0 : method.toLowerCase().includes('cartão') ? feeConfig.debit || 0 : 0;
+            const fee = Math.round(amount * percentage) / 100;
+            appState.transactions.push(transaction);
+            if (fee > 0) appState.transactions.push({ ...transaction, id:nextTransactionId(), type:'saida', amount:fee, category:'Taxas de Cartão', description:'Taxa de cartão pedido #' + saleId });
+            sale.fee = (sale.fee || 0) + fee;
+            sale.deliveryStatus = originalDelivery;
+            sale.paymentStatus = saleBalance(sale) <= 0 ? 'paid' : 'partial';
+            if (!sale.paymentPlan) sale.paymentPlan = (sale.payments || []).map(p => ({...p}));
+            if (sale.paymentStatus === 'paid') { sale.payments = appState.transactions.filter(t => t.saleId === saleId && t.type === 'entrada').map(t => ({method:t.paymentMethod, amount:t.amount, installments:t.installments || 1})); sale.paymentMethod = sale.payments.length === 1 ? sale.payments[0].method : 'Múltiplos'; }
+            if (sale.paymentStatus === 'paid') { sale.orderDate = sale.orderDate || sale.date; sale.date = date; sale.status = 'completed'; }
+            addAudit('payment', saleId, { amount, method, installments });
+        }
+        function cancelSaleSafely(saleId, returnStock, reason) {
+            const sale = appState.sales.find(s => s.id === saleId);
+            if (!sale || sale.status === 'cancelled') throw new Error('Este pedido já foi cancelado ou não existe.');
+            if (!reason.trim()) throw new Error('Informe o motivo do cancelamento.');
+            const items = sale.items || [];
+            if (returnStock && items.some(i => !Number.isFinite(i.qty) || i.qty <= 0 || !appState.inventory.some(p => p.id === i.productId && Number.isFinite(p.stock)))) throw new Error('Confira os produtos antes de devolver ao estoque.');
+            const amount = saleReceived(sale);
+            const original = { status:sale.status, deliveryStatus:saleDeliveryState(sale), paymentStatus:sale.paymentStatus };
+            // Refund receipts in their original accounts; retain expenses actually incurred.
+            const receipts = appState.transactions.filter(t => t.saleId === saleId && t.type === 'entrada');
+            receipts.forEach(t => appState.transactions.push({ ...t, id:nextTransactionId(), type:'saida', date:localDate(), category:'Devolução de venda', isSaleRefund:true, reversesTransactionId:t.id, description:'Estorno pedido #' + saleId + ': ' + reason.trim() }));
+            if (returnStock) items.forEach(i => { appState.inventory.find(p => p.id === i.productId).stock += i.qty; });
+            sale.status = 'cancelled'; sale.deliveryStatus = 'cancelled'; sale.paymentStatus = amount ? 'refunded' : 'cancelled';
+            sale.cancelledAt = new Date().toISOString(); sale.cancellationReason = reason.trim(); sale.stockReturned = returnStock;
+            addAudit('cancel', saleId, { original, amount, returnStock, reason:reason.trim() });
+        }
+        function openSaleManagement(saleId) {
+            const sale = appState.sales.find(s => s.id === saleId);
+            if (!sale) return;
+            const balance = saleBalance(sale), cancelled = sale.status === 'cancelled';
+            openModal(`<div class="p-5 space-y-4"><h3 class="text-lg font-bold dark:text-white">Pedido #${saleId} · ${escapeHtml(sale.clientName)}</h3>
+                <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-700 dark:text-white">Recebido: ${formatCurrency(saleReceived(sale))}<br>Falta receber: ${formatCurrency(cancelled ? 0 : balance)}<br>Entrega: ${cancelled ? 'Cancelada' : saleDeliveryState(sale) === 'delivered' ? 'Entregue' : 'Agendada'}</div>
+                ${!cancelled && balance > 0 ? `<label class="block dark:text-white">Receber agora<input id="sale-receive-amount" type="number" min="0.01" max="${balance}" step="0.01" value="${balance}" class="w-full p-3 rounded-xl border dark:bg-slate-700"></label><select id="sale-receive-method" class="w-full p-3 rounded-xl border dark:bg-slate-700 dark:text-white">${appState.config.paymentMethods.map(m => `<option>${escapeHtml(m)}</option>`).join('')}</select><label class="block text-sm dark:text-white">Parcelas (crédito)<select id="sale-receive-installments" class="w-full p-3 border rounded-xl dark:bg-slate-700">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1}x</option>`).join('')}</select></label><button id="sale-receive" class="w-full p-3 bg-green-600 text-white rounded-xl">Registrar recebimento</button>` : ''}
+                ${!cancelled && saleDeliveryState(sale) !== 'delivered' ? '<button id="sale-delivered" class="w-full p-3 bg-primary-600 text-white rounded-xl">Marcar como entregue, sem receber</button>' : ''}
+                ${!cancelled ? `<button onclick="openReschedule(${Number(saleId)})" class="w-full p-3 rounded-xl border dark:text-white">Alterar data e horário</button><button onclick="openCancelSale(${Number(saleId)})" class="w-full p-3 text-red-600 rounded-xl border">Cancelar / estornar pedido</button>` : ''}
+                <button onclick="closeModal(); renderVendas()" class="w-full p-3 rounded-xl bg-slate-100 dark:bg-slate-700 dark:text-white">Voltar</button></div>`);
+            const receive = document.getElementById('sale-receive');
+            if (receive) receive.onclick = () => { try { registerSalePayment(saleId, Number(document.getElementById('sale-receive-amount').value), document.getElementById('sale-receive-method').value, Number(document.getElementById('sale-receive-installments').value), localDate()); saveData(); openSaleManagement(saleId); } catch(e) { showToast(e.message,'error'); } };
+            const delivered = document.getElementById('sale-delivered');
+            if (delivered) delivered.onclick = () => { if (!confirm('Confirmar que o cliente recebeu os produtos? Nenhum recebimento será lançado.')) return; sale.deliveryStatus='delivered'; sale.deliveredAt=localDate(); addAudit('delivered',saleId,{}); saveData(); openSaleManagement(saleId); };
+        }
+        function openCancelSale(id) {
+            const sale = appState.sales.find(s => s.id === id);
+            if (!sale || sale.status === 'cancelled') return;
+            openModal(`<div class="p-5 space-y-4"><h3 class="text-lg font-bold dark:text-white">Cancelar pedido #${id}</h3><p class="text-sm dark:text-white">Será registrada uma devolução de ${formatCurrency(saleReceived(sale))}. Confirme somente ao efetuar a devolução ao cliente. Taxas e pagamentos de ajudantes serão mantidos como gastos.</p><textarea id="cancel-reason" placeholder="Motivo do cancelamento" class="w-full p-3 border rounded-xl dark:bg-slate-700 dark:text-white"></textarea><label class="flex gap-3 dark:text-white"><input type="checkbox" id="cancel-stock" ${saleDeliveryState(sale) !== 'delivered' ? 'checked' : ''}>Os produtos estão na fábrica: devolver ao estoque disponível.</label><button id="cancel-confirm" class="w-full p-3 bg-red-600 text-white rounded-xl">Confirmar cancelamento e estorno</button><button onclick="openSaleManagement(${Number(id)})" class="w-full p-3 border rounded-xl dark:text-white">Voltar</button></div>`);
+            document.getElementById('cancel-confirm').onclick = () => { try { cancelSaleSafely(id, document.getElementById('cancel-stock').checked, document.getElementById('cancel-reason').value); saveData(); closeModal(); renderVendas(); showToast('Cancelamento registrado com histórico.'); } catch(e) { showToast(e.message,'error'); } };
+        }
+        function openReschedule(id) {
+            const sale = appState.sales.find(s => s.id === id);
+            if (!sale || sale.status === 'cancelled') return;
+            openModal(`<div class="p-5 space-y-4"><h3 class="text-lg font-bold dark:text-white">Reagendar entrega</h3><input type="date" id="reschedule-date" value="${escapeHtml(sale.deliveryDate || localDate())}" class="w-full p-3 border rounded-xl dark:bg-slate-700"><input id="pdv-delivery-time" type="text" readonly onclick="openDeliveryTimePicker()" value="${escapeHtml(sale.deliveryTime || '')}" placeholder="Escolher horário" class="w-full p-3 border rounded-xl dark:bg-slate-700"><button id="reschedule-save" class="w-full p-3 rounded-xl bg-primary-600 text-white">Salvar e preparar mensagem</button><button onclick="openSaleManagement(${Number(id)})" class="w-full p-3 border rounded-xl dark:text-white">Voltar</button></div>`);
+            document.getElementById('reschedule-save').onclick = () => { const date=document.getElementById('reschedule-date').value, time=document.getElementById('pdv-delivery-time').value; if (!date || !deliveryTimeSlots().includes(time)) {showToast('Escolha a data e o horário.','error');return;} addAudit('reschedule',id,{from: sale.deliveryDate, to:date, time}); sale.deliveryDate=date; sale.deliveryTime=time; sale.deliveryStatus='scheduled'; saveData(); openDeliveryMessage(sale); };
+        }
+
         function paymentValidationError(total, payments, required = true) {
             if (!Number.isFinite(total) || total <= 0) return 'O total da venda deve ser maior que zero.';
             if (!Array.isArray(payments)) return 'Confira as formas de pagamento.';
@@ -6382,7 +6387,9 @@
                 payments: pdvPayments.map(p => ({ ...p })), // Armazena múltiplos pagamentos
                 fee: 0,
                 discount: pdvDiscount,
-                status: status, // 'completed' or 'pending'
+                paymentStatus: status === 'completed' ? 'paid' : 'unpaid',
+                deliveryStatus: status === 'completed' ? 'delivered' : 'scheduled',
+                status: status, // Compatibility for financial reports
                 employeeId: currentUser.role === 'Vendedor' ? 1 : null 
             };
 
@@ -6420,7 +6427,7 @@
                         category: 'Venda de Pré-moldados',
                         amount: payment.amount,
                         date: sale.date,
-                        description: `Venda #${saleId} (${payment.method}) - ${sale.clientName}`,
+                        description: `Venda #${saleId} (${payment.method}) - ${escapeHtml(sale.clientName)}`,
                         account: 'Caixa Principal',
                         paymentMethod: payment.method
                     });
@@ -6622,8 +6629,8 @@
                 doc.setTextColor(grayText[0], grayText[1], grayText[2]);
                 doc.setFont(undefined, 'normal');
                 doc.text(`CNPJ: ${config.cnpj}`, 15, 32);
-                doc.text(`${config.address}`, 15, 37);
-                doc.text(`WHATSAPP/TEL: ${config.phone}`, 15, 42);
+                doc.text(`${escapeHtml(config.address)}`, 15, 37);
+                doc.text(`WHATSAPP/TEL: ${escapeHtml(config.phone)}`, 15, 42);
 
                 // Título (Canto Direito)
                 doc.setFontSize(26);
@@ -6861,8 +6868,8 @@
                 doc.setTextColor(grayText[0], grayText[1], grayText[2]);
                 doc.setFont(undefined, 'normal');
                 doc.text(`CNPJ: ${config.cnpj}`, 15, 32);
-                doc.text(`${config.address}`, 15, 37);
-                doc.text(`TEL: ${config.phone}`, 15, 42);
+                doc.text(`${escapeHtml(config.address)}`, 15, 37);
+                doc.text(`TEL: ${escapeHtml(config.phone)}`, 15, 42);
 
                 // Título (Canto Direito)
                 doc.setFontSize(26);
@@ -7397,7 +7404,8 @@
                     const displayQty = item.isMeter ? (item.units || 1) : qty;
                     const revenue = (item.price || 0) * qty;
                     const fabricationCost = saleItemCost(item) * qty;
-                    const effectiveHelperFee = helperFeePerUnit || (p?.helperFee || 0);
+                    const recordedHelper = (sale.deliveryHelperItems || []).find(h => h.productId === item.productId);
+                    const effectiveHelperFee = recordedHelper ? recordedHelper.helperFee : (sale.deliveryHelperFeePerUnit ?? p?.helperFee ?? 0);
                     const helperCost = displayQty * helperCount * effectiveHelperFee;
                     const totalCost = fabricationCost + helperCost;
                     const profit = revenue - totalCost;
@@ -7494,7 +7502,7 @@
                         <div class="min-w-0">
                             <p class="text-[10px] font-black uppercase tracking-widest text-slate-400">Entrega</p>
                             <p class="text-sm font-black text-slate-900 dark:text-white">${formatDate(r.deliveryDate)}</p>
-                            <p class="text-[10px] font-bold text-slate-400 uppercase truncate">${r.clientName}</p>
+                            <p class="text-[10px] font-bold text-slate-400 uppercase truncate">${escapeHtml(r.clientName)}</p>
                         </div>
                         <div class="text-right shrink-0">
                             <p class="text-[10px] font-black uppercase tracking-widest text-slate-400">Lucro</p>
@@ -7557,7 +7565,7 @@
                             ${rows.map(r => `
                                 <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30">
                                     <td class="px-3 py-3 text-slate-500">${formatDate(r.deliveryDate)}</td>
-                                    <td class="px-3 py-3 font-medium">${r.clientName}</td>
+                                    <td class="px-3 py-3 font-medium">${escapeHtml(r.clientName)}</td>
                                     <td class="px-3 py-3 font-bold">${r.productName}</td>
                                     <td class="px-3 py-3 text-right font-bold">${r.qty}${r.isMeter ? ' un' : ''} ${r.isMeter ? `<br><span class="text-[9px] text-slate-400 font-normal">(${r.totalMeters.toFixed(2)}m)</span>` : ''}</td>
                                     <td class="px-3 py-3 text-right font-bold text-primary-600">${formatCurrency(r.revenue)}</td>
@@ -7649,14 +7657,14 @@
                                 <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Produto</p>
                                 <select id="rc-product" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
                                     <option value="">Todos</option>
-                                    ${products.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+                                    ${products.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
                                 </select>
                             </div>
                             <div>
                                 <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Cliente</p>
                                 <select id="rc-client" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-sm">
                                     <option value="">Todos</option>
-                                    ${clients.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+                                    ${clients.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
                                 </select>
                             </div>
                         </div>
@@ -7750,7 +7758,7 @@
                                 <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
                                     ${appState.inventory.sort((a,b) => (b.stock * b.costPrice) - (a.stock * a.costPrice)).map(p => `
                                         <tr>
-                                            <td class="px-2 py-2">${p.name}</td>
+                                            <td class="px-2 py-2">${escapeHtml(p.name)}</td>
                                             <td class="px-2 py-2 text-right">${p.stock} ${p.unit}</td>
                                             <td class="px-2 py-2 text-right">${formatCurrency(p.stock * p.costPrice)}</td>
                                         </tr>
@@ -7855,7 +7863,7 @@
                                             <div class="flex justify-between items-center mb-1">
                                                 <div class="flex items-center gap-2">
                                                     <span class="w-5 h-5 rounded-md ${index === 0 ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'} flex items-center justify-center text-[9px] font-black">${index + 1}º</span>
-                                                    <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200 uppercase">${p.name}</span>
+                                                    <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200 uppercase">${escapeHtml(p.name)}</span>
                                                 </div>
                                                 <div class="text-right">
                                                     <span class="text-[11px] font-black dark:text-white">${p.qty} <span class="text-[8px] text-slate-400">un</span></span>
@@ -7892,7 +7900,7 @@
                                             <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30">
                                                 <td class="px-2 py-3 font-bold">#${s.id}</td>
                                                 <td class="px-2 py-3 text-slate-500">${formatDate(s.date)}</td>
-                                                <td class="px-2 py-3 font-medium">${s.clientName}</td>
+                                                <td class="px-2 py-3 font-medium">${escapeHtml(s.clientName)}</td>
                                                 <td class="px-2 py-3 text-right">${formatCurrency(s.total)}</td>
                                                 <td class="px-2 py-3 text-right text-danger">${formatCurrency(s.fee || 0)}</td>
                                                 <td class="px-2 py-3 text-right font-bold text-success">${formatCurrency(net)}</td>
@@ -7973,7 +7981,7 @@
                                         const varPercent = prev && prev.avgPrice > 0 ? ((s.avgPrice - prev.avgPrice) / prev.avgPrice * 100).toFixed(1) : null;
                                         return `
                                             <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30">
-                                                <td class="px-2 py-3 font-bold text-slate-900 dark:text-white">${s.name}</td>
+                                                <td class="px-2 py-3 font-bold text-slate-900 dark:text-white">${escapeHtml(s.name)}</td>
                                                 <td class="px-2 py-3 text-right font-medium">${s.totalQty.toFixed(1)}</td>
                                                 <td class="px-2 py-3 text-right font-medium">${formatCurrency(s.avgPrice)}</td>
                                                 <td class="px-2 py-3 text-right text-slate-400">${prev ? formatCurrency(prev.avgPrice) : '-'}</td>
@@ -8226,7 +8234,7 @@
                         <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
                             <td class="px-4 py-3 font-medium text-slate-500">${formatDate(t.date)}</td>
                             <td class="px-4 py-3">
-                                <div class="font-bold text-slate-900 dark:text-white uppercase truncate max-w-[200px]">${t.description}</div>
+                                <div class="font-bold text-slate-900 dark:text-white uppercase truncate max-w-[200px]">${escapeHtml(t.description)}</div>
                                 <div class="text-[9px] text-slate-400 font-bold uppercase tracking-wider">${t.category || 'Geral'}</div>
                             </td>
                             <td class="px-4 py-3 text-right font-black ${t.type === 'entrada' ? 'text-green-600' : 'text-red-600'}">
@@ -8289,7 +8297,7 @@
                     <div class="space-y-4">
                         <div class="p-4 bg-primary-50 dark:bg-primary-900/10 rounded-2xl border border-primary-100 dark:border-primary-800/30 mb-6">
                             <p class="text-xs text-primary-700 dark:text-primary-400 font-bold leading-relaxed">
-                                Defina o objetivo de faturamento bruto para este ciclo de 30 dias. Esta meta ajuda a focar no crescimento além do ponto de equilíbrio.
+                                Defina o objetivo de faturamento bruto para este mês. Esta meta ajuda a focar no crescimento além do ponto de equilíbrio.
                             </p>
                         </div>
                         <div>
@@ -8358,9 +8366,7 @@
                         <button onclick="openEditSalesGoalModal()" class="bg-white dark:bg-slate-800 border border-primary-200 dark:border-primary-900/30 text-primary-600 px-4 py-2 rounded-xl flex items-center gap-2 font-bold text-sm hover:bg-primary-50 transition-all">
                             <i data-lucide="edit-3" class="w-4 h-4"></i> Ajustar Meta
                         </button>
-                        <button onclick="confirmResetBreakEven()" class="bg-white dark:bg-slate-800 border border-red-200 dark:border-red-900/30 text-red-600 px-4 py-2 rounded-xl flex items-center gap-2 font-bold text-sm hover:bg-red-50 transition-all">
-                            <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Reiniciar Ciclo
-                        </button>
+                        <label class="text-xs text-slate-500">Mês <input type="month" value="${getBreakEvenConfig().resetDateStr.slice(0,7)}" onchange="selectReportMonth(this.value)" class="p-2 rounded-lg border bg-white dark:bg-slate-800 dark:text-white"></label>
                         <button onclick="openGoalModal()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-semibold shadow-lg shadow-primary-500/20 transition-all">
                             <i data-lucide="plus" class="w-4 h-4"></i> Nova Meta
                         </button>
@@ -8434,9 +8440,9 @@
                 <!-- Ciclo Info -->
                 <div class="mb-8 flex flex-wrap items-center gap-3 bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm">
                     <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ciclo atual: ${currentMonthName}</span>
-                    <span class="text-xs font-black text-primary-600">Dia ${daysElapsed} / 30</span>
+                    <span class="text-xs font-black text-primary-600">Dia ${daysElapsed} / ${getBreakEvenConfig().daysInMonth}</span>
                     <div class="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden w-32">
-                        <div class="bg-primary-500 h-full" style="width: ${Math.min(100, (daysElapsed / 30) * 100)}%"></div>
+                        <div class="bg-primary-500 h-full" style="width: ${Math.min(100, (daysElapsed / getBreakEvenConfig().daysInMonth) * 100)}%"></div>
                     </div>
                     <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-auto">Reset em: <span class="text-slate-900 dark:text-white">${formatDate(endDateStr)}</span></span>
                 </div>
@@ -8541,6 +8547,38 @@
         // --- SETTINGS RENDER ---
         let configTab = 'menu';
 
+        async function refreshCloudSafely() {
+            if (syncRunning) { showToast('A sincronização já está em andamento.', 'warning'); return; }
+            if (pendingCloudSave) { await syncLocalChanges(); renderConfig(); return; }
+            try {
+                const doc = await db.collection('appData').doc(dbDocName).get({source:'server'});
+                if (!doc.exists) throw new Error('Nenhum dado disponível na nuvem. Os dados locais foram mantidos.');
+                const next = validateBackup(doc.data(), createEmptyState());
+                preserveLocalBackup();
+                localStorage.setItem(dataStorageKey, JSON.stringify(next));
+                appState = next; cloudBaseline = canonical(doc.data()); cloudSyncEnabled = true; remoteRefreshPending = false;
+                renderConfig(); showToast('Dados atualizados.');
+            } catch(e) { showToast(e.message || 'Não foi possível acessar a nuvem.', 'error'); }
+        }
+        async function updateAppVersion() {
+            if (pendingCloudSave) { showToast('Sincronize ou exporte um backup antes de atualizar.', 'error'); return; }
+            try { const registration = await navigator.serviceWorker?.getRegistration(); if (registration) await registration.update(); location.reload(); }
+            catch(e) { showToast('Não foi possível verificar a atualização. Confira a conexão.', 'error'); }
+        }
+        function openLocalBackups() {
+            let backups=[]; try {backups=JSON.parse(localStorage.getItem(dataStorageKey+'-backups') || '[]');} catch(_) {}
+            openModal('<div class="p-5 space-y-3 dark:text-white"><h3 class="font-bold text-lg">Backups deste aparelho</h3><p class="text-sm">Até cinco cópias diárias anteriores às alterações. Baixe a cópia para conferir ou restaurar pela opção Importar backup.</p>'+backups.map((b,i)=>'<button onclick="downloadLocalBackup('+i+')" class="w-full p-3 border rounded-xl">Baixar cópia de '+escapeHtml(b.day)+'</button>').join('')+(!backups.length?'<p>Nenhuma cópia automática disponível ainda.</p>':'')+'<button onclick="closeModal()" class="w-full p-3 border rounded-xl">Voltar</button></div>');
+        }
+        function downloadLocalBackup(index) {
+            const backups=JSON.parse(localStorage.getItem(dataStorageKey+'-backups') || '[]');const backup=backups[index];if(!backup)return;
+            const url=URL.createObjectURL(new Blob([backup.data],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='fabrica-backup-'+backup.day+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+        }
+        function openAuditHistory() {
+            const entries=(appState.auditLog || []).slice(-100).reverse();
+            const labels={payment:'Recebimento',cancel:'Cancelamento / estorno',delivered:'Entrega confirmada',reschedule:'Reagendamento'};
+            openModal('<div class="p-5 dark:text-white"><h3 class="text-lg font-bold mb-4">Últimas alterações</h3>'+entries.map(e=>'<div class="p-3 border-b"><b>'+escapeHtml(labels[e.action] || e.action)+'</b> · Pedido '+escapeHtml(e.saleId)+'<p class="text-xs">'+escapeHtml(new Date(e.at).toLocaleString('pt-BR'))+'</p><p class="text-sm break-words">'+escapeHtml(JSON.stringify(e.details))+'</p></div>').join('')+(!entries.length?'<p>Nenhuma alteração registrada nesta versão.</p>':'')+'<button onclick="closeModal()" class="w-full p-3 border rounded-xl mt-3">Voltar</button></div>');
+        }
+
         function renderConfig() {
             let html = `
                 <div class="mb-8 px-1">
@@ -8550,6 +8588,16 @@
 
                 <div class="max-w-md mx-auto sm:max-w-none px-1">
                     ${renderConfigContent()}
+                    <div class="mt-6 p-4 rounded-2xl border dark:border-slate-700 dark:text-white space-y-3">
+                        <p class="font-bold">Dados e versão · revisão local 2026-09-06</p>
+                        <p class="text-sm">${pendingCloudSave ? 'Há alterações aguardando sincronização.' : cloudSyncEnabled ? 'Conectado à nuvem.' : 'Dados locais: nuvem indisponível.'}</p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <button onclick="refreshCloudSafely()" class="p-3 border rounded-xl">Atualizar / sincronizar dados</button>
+                            <button onclick="openLocalBackups()" class="p-3 border rounded-xl">Backups deste aparelho</button>
+                            <button onclick="openAuditHistory()" class="p-3 border rounded-xl">Histórico de alterações</button>
+                            <button onclick="updateAppVersion()" class="p-3 border rounded-xl">Verificar atualização do app</button>
+                        </div>
+                    </div>
                 </div>
             `;
             document.getElementById('content-area').innerHTML = html;
@@ -8819,7 +8867,7 @@
                                                         <i data-lucide="cog" class="w-5 h-5"></i>
                                                     </div>
                                                     <div>
-                                                        <p class="font-black text-sm text-slate-900 dark:text-white uppercase tracking-tight">${e.name}</p>
+                                                        <p class="font-black text-sm text-slate-900 dark:text-white uppercase tracking-tight">${escapeHtml(e.name)}</p>
                                                         <p class="text-[9px] ${isUrgent ? 'text-red-600 font-black' : 'text-slate-500'} uppercase font-bold">Próxima: ${formatDate(localDate(next))}</p>
                                                     </div>
                                                 </div>
@@ -9050,26 +9098,7 @@
             `;
         }
 
-        function saveConfig() {
-            appState.config.companyName = document.getElementById('conf-name').value;
-            appState.config.cnpj = document.getElementById('conf-cnpj').value;
-            const streetEl = document.getElementById('conf-addr-street');
-            const numberEl = document.getElementById('conf-addr-number');
-            const neighEl = document.getElementById('conf-addr-neighborhood');
-            const cityEl = document.getElementById('conf-addr-city');
-            const stateEl = document.getElementById('conf-addr-state');
-            const cepEl = document.getElementById('conf-addr-cep');
-            if (streetEl) appState.config.addressStreet = streetEl.value;
-            if (numberEl) appState.config.addressNumber = numberEl.value;
-            if (neighEl) appState.config.addressNeighborhood = neighEl.value;
-            if (cityEl) appState.config.addressCity = cityEl.value;
-            if (stateEl) appState.config.addressState = stateEl.value;
-            if (cepEl) appState.config.addressCEP = cepEl.value;
-            appState.config.address = composeCompanyAddress(appState.config);
-            saveData();
-            showToast('Configurações salvas!');
-            switchConfigTab('menu');
-        }
+
 
         function startManualMigration() {
             if (!firebaseReady || !db) {
@@ -9106,21 +9135,7 @@
             }
         }
 
-        function saveCardFees() {
-            const debitFee = parseFloat(document.getElementById('fee-debit').value) || 0;
-            const creditInputs = document.querySelectorAll('.fee-credit-input');
-            
-            appState.config.cardFees.debit = debitFee;
-            creditInputs.forEach(input => {
-                const idx = parseInt(input.dataset.idx);
-                const fee = parseFloat(input.value) || 0;
-                appState.config.cardFees.credit[idx].fee = fee;
-            });
-            
-            saveData();
-            showToast('Taxas de cartão atualizadas!');
-            switchConfigTab('menu');
-        }
+
 
         function openCategoryModal(type, name = '', index = -1) {
             const isEdit = index !== -1;
@@ -9249,15 +9264,7 @@
             openModal(html);
         }
 
-        function recordMaintenance(id) {
-            const eq = appState.equipment.find(e => e.id === id);
-            if (eq) {
-                eq.lastMaintenance = localDate();
-                saveData();
-                renderConfig();
-                showToast(`Manutenção registrada!`);
-            }
-        }
+
 
         function saveConfig() {
              appState.config.companyName = document.getElementById('conf-name').value;
@@ -9301,7 +9308,7 @@
                 eq.lastMaintenance = localDate();
                 saveData();
                 renderConfig();
-                showToast(`Manutenção de "${eq.name}" registrada!`);
+                showToast(`Manutenção de "${escapeHtml(eq.name)}" registrada!`);
             }
         }
         function deleteEquipment(id) {
@@ -9445,6 +9452,17 @@
         }
 
         // --- APP INITIALIZATION ---
+        let remoteRefreshPending = false;
+        function safeRemoteRender() {
+            const modalOpen = !modalBackdrop.classList.contains('hidden');
+            const editing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+            if (modalOpen || editing || (typeof currentCart !== 'undefined' && currentCart.length)) {
+                remoteRefreshPending = true;
+                return;
+            }
+            remoteRefreshPending = false;
+            renderContent();
+        }
         function initApp() {
             if (!currentUser || isInitializing) return;
             isInitializing = true;
@@ -9457,6 +9475,11 @@
                     if (doc.metadata.hasPendingWrites || doc.metadata.fromCache) return;
                     if (doc.exists) {
                         const cloudData = doc.data();
+                        if ((!modalBackdrop.classList.contains('hidden') || currentCart.length) && canonical(cloudData) !== cloudBaseline && !pendingCloudSave && !syncRunning) {
+                            remoteRefreshPending = true;
+                            setSaveStatus('Há novidades em outro aparelho. Conclua ou feche o formulário e use Atualizar dados em Configurações.');
+                            return;
+                        }
                         // Se detectarmos dados na nuvem, ativamos o sincronismo
                         cloudSyncEnabled = true;
                         
@@ -9474,9 +9497,9 @@
                             setSaveStatus('Dados carregados da nuvem, mas não foi possível guardar uma cópia neste aparelho.', true);
                         }
                         if (currentUser) {
-                            renderContent();
+                            safeRemoteRender();
                             // Tenta reconstruir apenas se necessário e após a primeira renderização
-                            setTimeout(reconstructPastCycles, 1000);
+                            // Monthly reporting does not rewrite legacy cycle history.
                         }
                     } else {
                         // Se não existe na nuvem, o sincronismo fica desativado
@@ -9516,7 +9539,7 @@
             document.getElementById('user-avatar').src = currentUser.avatar;
             
             // Reconstrução em segundo plano para não travar o carregamento inicial
-            setTimeout(reconstructPastCycles, 1500);
+            // Legacy cycle history is preserved without automatic reconstruction.
 
             // Apply theme
             const savedTheme = localStorage.getItem('financeProTheme');

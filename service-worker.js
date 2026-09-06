@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v4';
+const CACHE_NAME = 'app-fabrica-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -31,16 +31,16 @@ self.addEventListener('fetch', (event) => {
   const isNavigation = event.request.mode === 'navigate';
   const isIndex = isSameOrigin && (url.pathname.endsWith('/') || url.pathname.endsWith('/index.html'));
 
-  if (isNavigation || isIndex) {
+  if (isNavigation || isIndex || (isSameOrigin && url.pathname.endsWith('.js'))) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
           if (!response.ok) throw new Error('Página indisponível');
           const responseToCache = response.clone();
-          event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', responseToCache)));
+          event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(isNavigation || isIndex ? './index.html' : event.request, responseToCache)));
           return response;
         })
-        .catch(() => caches.match('./index.html'))
+        .catch(() => caches.match(isNavigation || isIndex ? './index.html' : event.request))
     );
     return;
   }
