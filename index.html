@@ -1483,10 +1483,10 @@
 
         function renderProducao() {
             // Cálculo de Produção (Sincronizado com Ponto de Equilíbrio)
-            const { resetDateStr, daysElapsed } = getBreakEvenConfig();
+            const { resetDateStr, endDateStr, daysElapsed, daysInMonth } = getBreakEvenConfig();
             
             const monthlyProductionMap = new Map();
-            (appState.production || []).filter(p => p.date >= resetDateStr).forEach(p => {
+            (appState.production || []).filter(p => p.date >= resetDateStr && p.date <= endDateStr).forEach(p => {
                 const name = p.productName || 'Produto';
                 monthlyProductionMap.set(name, (monthlyProductionMap.get(name) || 0) + (p.qty || 0));
             });
@@ -1581,7 +1581,7 @@
                     <div class="p-4 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-700/30 flex justify-between items-center">
                         <h4 class="font-black text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-2">
                             <i data-lucide="bar-chart-2" class="w-4 h-4"></i>
-                            Produção no Ciclo (Dia ${daysElapsed}/30)
+                            Produção do mês (Dia ${daysElapsed}/${daysInMonth})
                         </h4>
                         <div class="flex items-center gap-3">
                             <span class="text-[10px] font-black text-primary-600 bg-primary-50 dark:bg-primary-900/20 px-3 py-1 rounded-full uppercase tracking-tighter">Total: ${totalMonthly} un</span>
@@ -1632,8 +1632,8 @@
                     <div class="flex flex-col sm:flex-row gap-4 items-center justify-between">
                         <h4 class="font-black text-xs uppercase tracking-widest text-slate-400">Histórico de Produção</h4>
                         <div class="flex gap-2 w-full sm:w-auto">
-                            <input type="date" id="prod-filter-start" onchange="filterProduction()" class="flex-1 sm:w-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold p-3 outline-none focus:ring-2 focus:ring-primary-500 shadow-sm">
-                            <input type="date" id="prod-filter-end" onchange="filterProduction()" class="flex-1 sm:w-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold p-3 outline-none focus:ring-2 focus:ring-primary-500 shadow-sm">
+                            <input type="date" id="prod-filter-start" value="${resetDateStr}" min="${resetDateStr}" max="${endDateStr}" onchange="filterProduction()" class="flex-1 sm:w-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold p-3 outline-none focus:ring-2 focus:ring-primary-500 shadow-sm">
+                            <input type="date" id="prod-filter-end" value="${endDateStr}" min="${resetDateStr}" max="${endDateStr}" onchange="filterProduction()" class="flex-1 sm:w-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold p-3 outline-none focus:ring-2 focus:ring-primary-500 shadow-sm">
                         </div>
                     </div>
                     
@@ -1651,11 +1651,12 @@
         }
 
         function filterProduction() {
+            const { resetDateStr, endDateStr } = getBreakEvenConfig();
             const start = document.getElementById('prod-filter-start').value;
             const end = document.getElementById('prod-filter-end').value;
 
             const filtered = appState.production.filter(p => {
-                const matchesDate = (!start || p.date >= start) && (!end || p.date <= end);
+                const matchesDate = p.date >= resetDateStr && p.date <= endDateStr && (!start || p.date >= start) && (!end || p.date <= end);
                 return matchesDate;
             });
 
