@@ -339,6 +339,7 @@
         let isInitializing = false;
         let cloudUnsubscribe = null;
         let cloudBaseline = undefined;
+        let deferredCloudData = null;
         let pendingCloudSave = false;
         let syncRunning = false;
         let syncPromise = Promise.resolve(false);
@@ -583,7 +584,7 @@
         let pdvPayments = [];
 
         // --- UTILS ---
-        const { localDate, escapeHtml, canonical, validateBackup } = AppSafety;
+        const { localDate, escapeHtml, canonical, validateBackup, mergeStates } = AppSafety;
         const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
         const formatDate = (dateStr) => {
             if (!dateStr) return '';
@@ -711,22 +712,32 @@
                         if (cloudBaseline === undefined) throw new Error('Aguarde a leitura da nuvem antes de sincronizar.');
                         const snapshot = JSON.parse(JSON.stringify(appState));
                         const expected = cloudBaseline;
+                        let committed = snapshot;
                         const ref = db.collection('appData').doc(dbDocName);
                         setSaveStatus('Salvo neste aparelho. Sincronizando...');
                         await db.runTransaction(async transaction => {
                             const remote = await transaction.get(ref);
                             const actual = remote.exists ? canonical(remote.data()) : null;
+                            committed = snapshot;
                             if (actual === canonical(snapshot)) return;
-                            if (actual !== expected) throw new Error('Há alterações em outro aparelho. Seus dados locais foram preservados. Exporte um backup para conciliar as versões.');
-                            transaction.set(ref, snapshot);
+                            if (actual !== expected) {
+                                if (!expected || !remote.exists) throw new Error('Há alterações em outro aparelho. Seus dados locais foram preservados. Exporte um backup para conciliar as versões.');
+                                committed = mergeStates(JSON.parse(expected), snapshot, remote.data());
+                            }
+                            transaction.set(ref, committed);
                         });
-                        cloudBaseline = canonical(snapshot);
+                        const reconciled = mergeStates(snapshot, appState, committed);
+                        appState = reconciled;
+                        localStorage.setItem(dataStorageKey, JSON.stringify(appState));
+                        cloudBaseline = canonical(committed);
                         pendingCloudSave = canonical(appState) !== cloudBaseline;
                         if (pendingCloudSave) localStorage.setItem(pendingKey, JSON.stringify({ baseline: cloudBaseline }));
                         else localStorage.removeItem(pendingKey);
                     }
+                    if (typeof deferredCloudData !== 'undefined') deferredCloudData = null;
                     saveOutcome = 'synced';
                     setSaveStatus('Salvo neste aparelho e na nuvem.');
+                    if (typeof safeRemoteRender === 'function') safeRemoteRender();
                     return true;
                 } catch (err) {
                     setSaveStatus('Salvo apenas neste aparelho. ' + (err.message || 'Verifique sua conexão.'), true);
@@ -1163,6 +1174,7 @@
         }
 
         function resetSessionUI() {
+            if (typeof deferredCloudData !== 'undefined') deferredCloudData = null;
             currentUser = null;
             isInitializing = false;
             if (cloudUnsubscribe) cloudUnsubscribe();
@@ -1199,14 +1211,18 @@
                 if (!pendingCloudSave) {
                     const remoteState = firstSnapshot.exists ? firstSnapshot.data() : null;
                     cloudBaseline = remoteState ? canonical(remoteState) : null;
-                    cloudSyncEnabled = !!remoteState;
+                    cloudSyncEnabled = true;
                     const defaults = createEmptyState();
+                    const localCopy = localStorage.getItem?.(dataStorageKey);
+                    preserveLocalBackup();
                     appState = remoteState
                         ? { ...defaults, ...remoteState, config: { ...defaults.config, ...remoteState.config } }
-                        : defaults;
+                        : localCopy ? JSON.parse(localCopy) : defaults;
+                    if (!remoteState && localCopy) { pendingCloudSave = true; localStorage.setItem(pendingKey, JSON.stringify({baseline:null})); }
                     delete appState.config.loginPassword;
                     try { localStorage.setItem(dataStorageKey, JSON.stringify(appState)); } catch (_) {}
                 }
+                cloudSyncEnabled = true;
                 currentUser = { uid: user.uid, email: user.email, name: user.displayName || 'Admin', role: 'Administrador', avatar: 'app-icon.svg' };
                 initApp();
             } catch (err) {
@@ -9452,6 +9468,16 @@
         }
 
         // --- APP INITIALIZATION ---
+        function applyDeferredCloudData() {
+            if (!currentUser || !deferredCloudData || pendingCloudSave || syncRunning || currentCart.length || !modalBackdrop.classList.contains('hidden') || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
+            const next = deferredCloudData;
+            try {
+                localStorage.setItem(dataStorageKey, JSON.stringify(next));
+                appState = next; cloudBaseline = canonical(next); deferredCloudData = null; remoteRefreshPending = false;
+                renderContent();
+            } catch (_) { setSaveStatus('Não foi possível guardar os dados atualizados neste aparelho.', true); }
+        }
+        setInterval(applyDeferredCloudData, 1500);
         let remoteRefreshPending = false;
         function safeRemoteRender() {
             const modalOpen = !modalBackdrop.classList.contains('hidden');
@@ -9475,8 +9501,9 @@
                     if (doc.metadata.hasPendingWrites || doc.metadata.fromCache) return;
                     if (doc.exists) {
                         const cloudData = doc.data();
-                        if ((!modalBackdrop.classList.contains('hidden') || currentCart.length) && canonical(cloudData) !== cloudBaseline && !pendingCloudSave && !syncRunning) {
+                        if ((!modalBackdrop.classList.contains('hidden') || currentCart.length || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) && canonical(cloudData) !== cloudBaseline && !pendingCloudSave && !syncRunning) {
                             remoteRefreshPending = true;
+                            deferredCloudData = cloudData;
                             setSaveStatus('Há novidades em outro aparelho. Conclua ou feche o formulário e use Atualizar dados em Configurações.');
                             return;
                         }
@@ -9487,6 +9514,7 @@
                             if (!syncRunning) syncLocalChanges();
                             return;
                         }
+                        deferredCloudData = null;
                         cloudBaseline = canonical(cloudData);
                         // Atualiza o estado local com os dados da nuvem
                         appState = cloudData;
@@ -9502,10 +9530,10 @@
                             // Monthly reporting does not rewrite legacy cycle history.
                         }
                     } else {
-                        // Se não existe na nuvem, o sincronismo fica desativado
-                        // Isso protege os dados locais de serem sobrescritos por um documento vazio
-                        cloudSyncEnabled = false;
+                        // A transação cria o primeiro documento apenas se ele continuar ausente.
+                        cloudSyncEnabled = true;
                         if (!pendingCloudSave) cloudBaseline = null;
+                        if (pendingCloudSave && !syncRunning) syncLocalChanges();
                         console.log(`Ambiente ${currentEnv} aguardando migração ou novos dados.`);
                     }
                 }, (err) => {

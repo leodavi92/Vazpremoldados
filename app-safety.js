@@ -52,7 +52,35 @@
         }
         return result;
     }
-    const api = { localDate, escapeHtml, canonical, validateBackup };
+    function mergeStates(base, local, remote) {
+        const equal = (a,b) => canonical(a) === canonical(b);
+        function merge(b,l,r,path,atomic=false) {
+            if(equal(l,r)) return l;
+            if(equal(l,b)) return r;
+            if(equal(r,b)) return l;
+            const conflict = () => { throw new Error('Há alterações em outro aparelho no mesmo registro (' + path + '). Seus dados locais foram preservados. Exporte um backup para conciliar as versões.'); };
+            if(atomic) return conflict();
+            if(Array.isArray(b) && Array.isArray(l) && Array.isArray(r) && [b,l,r].every(list=>list.every(v=>v && typeof v==='object' && v.id != null))) {
+                const maps=[b,l,r].map(list=>new Map(list.map(v=>[String(v.id),v])));
+                if(maps.some((map,i)=>map.size !== [b,l,r][i].length)) return conflict();
+                const ids=new Set([...maps[2].keys(),...maps[1].keys()]);const result=[];
+                for(const id of ids){const row=merge(maps[0].get(id),maps[1].get(id),maps[2].get(id),path+'/'+id,true);if(row!==undefined)result.push(row);}
+                return result;
+            }
+            if([b,l,r].every(v=>v && typeof v==='object' && !Array.isArray(v))) {
+                const result={};
+                for(const key of new Set([...Object.keys(b),...Object.keys(l),...Object.keys(r)])) {
+                    if(['__proto__','constructor','prototype'].includes(key)) return conflict();
+                    const value=merge(b[key],l[key],r[key],path+'/'+key);
+                    if(value!==undefined)result[key]=value;
+                }
+                return result;
+            }
+            return conflict();
+        }
+        return merge(base,local,remote,'dados');
+    }
+    const api = { localDate, escapeHtml, canonical, validateBackup, mergeStates };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else root.AppSafety = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
