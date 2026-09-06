@@ -2912,20 +2912,29 @@
         }
 
         // --- CASH FLOW RENDER ---
+        let cashMonth = '';
+        function cashMonthTransactions() {
+            const month = cashMonth || localDate().slice(0,7);
+            return appState.transactions.filter(t => typeof t.date === 'string' && t.date.slice(0,7) === month);
+        }
+        function selectCashMonth(value) {
+            if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return;
+            cashMonth=value;renderCaixa();
+        }
         function renderCaixa() {
-            const balance = appState.transactions.reduce((acc, t) => acc + (t.type === 'entrada' ? t.amount : -t.amount), 0);
-            const totalIn = appState.transactions.filter(t => t.type === 'entrada').reduce((acc, t) => acc + t.amount, 0);
-            const totalOut = appState.transactions.filter(t => t.type === 'saida').reduce((acc, t) => acc + t.amount, 0);
+            const balance = cashMonthTransactions().reduce((acc, t) => acc + (t.type === 'entrada' ? t.amount : -t.amount), 0);
+            const totalIn = cashMonthTransactions().filter(t => t.type === 'entrada').reduce((acc, t) => acc + t.amount, 0);
+            const totalOut = cashMonthTransactions().filter(t => t.type === 'saida').reduce((acc, t) => acc + t.amount, 0);
             const showBalance = appState.config.showBalance;
 
             // Agrupar transações por saleId para exibição
             const groupedTransactions = [];
             const processedSaleIds = new Set();
 
-            appState.transactions.slice().reverse().forEach(t => {
-                if (t.saleId) {
+            cashMonthTransactions().slice().reverse().forEach(t => {
+                if (t.saleId && !t.isSaleRefund && cashMonthTransactions().some(x => x.saleId === t.saleId && x.type === 'entrada')) {
                     if (!processedSaleIds.has(t.saleId)) {
-                        const saleGroup = appState.transactions.filter(x => x.saleId === t.saleId);
+                        const saleGroup = cashMonthTransactions().filter(x => x.saleId === t.saleId && !x.isSaleRefund);
                         const mainEntry = saleGroup.find(x => x.type === 'entrada') || t;
                         const sale = appState.sales.find(s => s.id === t.saleId);
                         
@@ -2951,9 +2960,10 @@
 
             let html = `
                 <div class="max-w-md mx-auto sm:max-w-none px-1">
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4 dark:text-white"><h2 class="text-xl font-bold">Fluxo de caixa mensal</h2><label class="text-sm">Mês<input type="month" aria-label="Mês do fluxo de caixa" value="${cashMonth || localDate().slice(0,7)}" onchange="selectCashMonth(this.value)" class="block p-3 border rounded-xl bg-white dark:bg-slate-800 text-base"></label></div>
                     <!-- 1. TOPO DA TELA (SALDO ESTILO FINTECH) -->
                     <div class="mb-6 p-6 bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 text-center animate-fade-in">
-                        <p class="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Saldo do Caixa</p>
+                        <p class="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Resultado do mês</p>
                         <div class="flex items-center justify-center gap-3">
                             <h2 class="text-2xl sm:text-4xl font-black text-slate-900 dark:text-white tracking-tight break-all">
                                 ${showBalance ? formatCurrency(balance) : '••••••'}
@@ -2989,11 +2999,11 @@
                     <!-- 3. INDICADORES FINANCEIROS -->
                     <div class="grid grid-cols-2 gap-3 mb-6">
                         <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 min-w-0">
-                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 truncate">Entradas</p>
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 truncate">Entradas do mês</p>
                             <p class="text-base font-bold text-green-600 truncate">${formatCurrency(totalIn)}</p>
                         </div>
                         <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 min-w-0">
-                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 truncate">Saídas</p>
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 truncate">Saídas do mês</p>
                             <p class="text-base font-bold text-red-600 truncate">${formatCurrency(totalOut)}</p>
                         </div>
                     </div>
@@ -3022,7 +3032,7 @@
                                 <div class="w-12 h-12 bg-slate-50 dark:bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
                                     <i data-lucide="receipt" class="w-6 h-6"></i>
                                 </div>
-                                <p class="text-xs text-slate-400 italic">Nenhuma movimentação.</p>
+                                <p class="text-xs text-slate-400 italic">Nenhuma movimentação neste mês.</p>
                             </div>
                         ` : ''}
                     </div>
@@ -3425,7 +3435,7 @@
                         </div>
                         
                         <div id="full-statement-list" class="divide-y divide-slate-50 dark:divide-slate-700/50">
-                            ${appState.transactions.slice().reverse().map(t => renderFintechRow(t)).join('')}
+                            ${cashMonthTransactions().slice().reverse().map(t => renderFintechRow(t)).join('')}
                         </div>
                     </div>
                 </div>
