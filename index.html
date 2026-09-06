@@ -1885,12 +1885,12 @@
                         ${[
                             { label: 'Clientes', icon: 'users', action: "switchTab('clientes')", color: 'text-indigo-600 dark:text-indigo-300', bg: 'bg-indigo-50 dark:bg-indigo-950', hint: 'Cadastros e contatos' },
                             { label: 'Vender', icon: 'shopping-cart', action: "switchTab('vendas')", color: 'text-sky-600 dark:text-sky-300', bg: 'bg-sky-50 dark:bg-sky-950', hint: 'Vendas e pedidos' },
-                            { label: 'Gasto', icon: 'circle-minus', action: "switchTab('caixa'); openTransactionModal('saida')", color: 'text-rose-600 dark:text-rose-300', bg: 'bg-rose-50 dark:bg-rose-950', hint: 'Registrar despesa' },
+                            { label: 'Fluxo de caixa', icon: 'wallet', action: "switchTab('caixa')", color: 'text-rose-600 dark:text-rose-300', bg: 'bg-rose-50 dark:bg-rose-950', hint: 'Entradas e saídas' },
                             { label: 'Produzir', icon: 'factory', action: "switchTab('producao')", color: 'text-orange-600 dark:text-orange-300', bg: 'bg-orange-50 dark:bg-orange-950', hint: 'Produção da fábrica' },
                             { label: 'Entregas', icon: 'truck', action: "switchTab('vendas'); switchVendasTab('entregas');", color: 'text-emerald-600 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-950', hint: 'Pedidos para entregar' },
                             { label: 'Estoque', icon: 'package', action: "switchTab('estoque')", color: 'text-blue-600 dark:text-blue-300', bg: 'bg-blue-50 dark:bg-blue-950', hint: 'Produtos e materiais' },
                             { label: 'Investimentos', icon: 'piggy-bank', action: "switchTab('investimentos')", color: 'text-emerald-600 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-950', hint: 'Construir sua reserva' },
-                            { label: 'Fluxo de caixa', icon: 'wallet', action: "switchTab('caixa')", color: 'text-teal-600 dark:text-teal-300', bg: 'bg-teal-50 dark:bg-teal-950', hint: 'Entradas e saídas' },
+                            { label: 'Contas', icon: 'calendar-days', action: "switchTab('contas')", color: 'text-teal-600 dark:text-teal-300', bg: 'bg-teal-50 dark:bg-teal-950', hint: 'Contas e vencimentos' },
                             { label: 'Funcionários', icon: 'contact', action: "switchTab('funcionarios')", color: 'text-violet-600 dark:text-violet-300', bg: 'bg-violet-50 dark:bg-violet-950', hint: 'Equipe e pagamentos' },
                             { label: 'Visão geral', icon: 'chart-column', action: "switchTab('overview')", color: 'text-cyan-600 dark:text-cyan-300', bg: 'bg-cyan-50 dark:bg-cyan-950', hint: 'Indicadores e avisos' },
                             { label: 'Relatórios', icon: 'file-text', action: "switchTab('relatorios')", color: 'text-purple-600 dark:text-purple-300', bg: 'bg-purple-50 dark:bg-purple-950', hint: 'Resultados da fábrica' },
@@ -3089,7 +3089,7 @@
 
             // Lógica para Pagamento de Ajudante
             const isHelper = t.category === 'Pagamento de Ajudante' || t.isHelperPayment;
-            const title = isHelper ? (t.helperName || 'Ajudante não informado') : t.description;
+            const title = isHelper ? (t.helperName || t.description || 'Ajudante não informado') : t.description;
             const titleColorClass = isHelper ? 'text-red-600' : 'text-slate-900 dark:text-white';
 
             return `
@@ -3720,6 +3720,7 @@
                             <label class="block text-sm font-medium mb-1">Descrição *</label>
                             <input type="text" id="t-desc" required class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                         </div>
+                        <div id="t-helper-container" hidden><label for="t-helper-name" class="block text-sm font-medium mb-1">Nome do ajudante</label><input id="t-helper-name" type="text" placeholder="Informe o nome" class="w-full p-3 border rounded-lg bg-slate-50 dark:bg-slate-700"></div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium mb-1">Valor (R$) *</label>
@@ -3758,6 +3759,10 @@
                 </div>
             `;
             openModal(html);
+            const helperCategory = () => type === 'saida' && /ajudante/i.test(document.getElementById('t-cat').value);
+            const updateHelperField = () => { document.getElementById('t-helper-container').hidden = !helperCategory(); };
+            document.getElementById('t-cat').addEventListener('change', updateHelperField);
+            updateHelperField();
             
             document.getElementById('transaction-form').onsubmit = (e) => {
                 e.preventDefault();
@@ -3772,6 +3777,10 @@
                     paymentMethod: document.getElementById('t-method').value
                 };
                 
+                if (helperCategory()) {
+                    trans.isHelperPayment = true;
+                    trans.helperName = document.getElementById('t-helper-name').value.trim() || trans.description.trim();
+                }
                 appState.transactions.push(trans);
                 saveData();
                 closeModal();
@@ -9638,6 +9647,7 @@
                 case 'producao': renderProducao(); break;
                 case 'estoque': renderEstoque(); break;
                 case 'caixa': renderCaixa(); break;
+                case 'contas': renderContasFixas(); break;
                 case 'funcionarios': renderFuncionarios(); break;
                 case 'clientes': renderClientes(); break;
                 case 'vendas': renderVendas(); break;
