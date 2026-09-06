@@ -4133,6 +4133,7 @@
 
                 const newClient = {
                     id: client ? client.id : Date.now(),
+                    createdAt: client ? (client.createdAt || Number(client.id) || 0) : Date.now(),
                     name: document.getElementById('c-name').value,
                     taxId: document.getElementById('c-tax').value,
                     type: document.getElementById('c-type').value,
@@ -4265,6 +4266,16 @@
         }
 
         // --- PDV EXTRAS ---
+        let clientsVisible = 10, pdvClientsVisible = 5;
+        function matchingClients(query) {
+            const normalize=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR').trim();
+            const term=normalize(query);
+            const created=c=>Number(c.createdAt)||Date.parse(c.createdAt)||Number(c.id)||0;
+            return appState.clients.filter(c=>[c.name,c.taxId].some(v=>normalize(v).includes(term))).slice().sort((a,b)=>created(b)-created(a)||Number(b.id)-Number(a.id));
+        }
+        function clientLoadMore(total,visible,step,handler) {
+            return total>visible ? '<button type="button" onclick="'+handler+'(true)" class="w-full p-3 min-h-[48px] font-semibold text-primary-600 dark:text-primary-400 border-t">Carregar mais '+Math.min(step,total-visible)+' clientes</button>' : '';
+        }
         function openPDVClientSelector() {
             let html = `
                 <div class="p-6">
@@ -4277,7 +4288,7 @@
 
                     <div class="relative mb-4">
                         <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
-                        <input type="text" id="pdv-client-search" onkeyup="filterPDVClients()" placeholder="Buscar cliente..."
+                        <input type="text" id="pdv-client-search" oninput="filterPDVClients()" placeholder="Buscar cliente..."
                             class="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-sm outline-none focus:ring-2 focus:ring-primary-500/20">
                     </div>
 
@@ -4308,28 +4319,26 @@
             closeModal();
         }
 
-        function filterPDVClients() {
+        function filterPDVClients(loadMore = false) {
+            pdvClientsVisible = loadMore ? pdvClientsVisible + 5 : 5;
             const query = (document.getElementById('pdv-client-search')?.value || '').toLowerCase();
             const container = document.getElementById('pdv-client-results');
             if (!container) return;
 
-            const results = appState.clients.filter(c => {
-                const name = (c.name || '').toLowerCase();
-                const tax = (c.taxId || '').toLowerCase();
-                return !query || name.includes(query) || tax.includes(query);
-            });
+            const results = matchingClients(query);
 
             container.innerHTML = `
                 <button onclick="setPDVClient(null)" class="w-full text-left p-4 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl border border-slate-100 dark:border-slate-700 transition-colors">
                     <p class="font-bold">Consumidor Final</p>
                     <p class="text-xs text-slate-500">Padrão</p>
                 </button>
-                ${results.map(c => `
+                ${results.slice(0,pdvClientsVisible).map(c => `
                     <button onclick="setPDVClient(${c.id})" class="w-full text-left p-4 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl border border-slate-100 dark:border-slate-700 transition-colors">
                         <p class="font-bold">${escapeHtml(c.name)}</p>
-                        <p class="text-xs text-slate-500">${c.taxId || ''}</p>
+                        <p class="text-xs text-slate-500">${escapeHtml(c.taxId || '')}</p>
                     </button>
                 `).join('') || '<div class="py-10 text-center text-slate-400 text-sm">Nenhum cliente encontrado.</div>'}
+                ${clientLoadMore(results.length,pdvClientsVisible,5,'filterPDVClients')}
             `;
             lucide.createIcons();
         }
@@ -4895,12 +4904,11 @@
                         </div>
                     </div>
                     <div id="client-table-body" class="divide-y divide-slate-100 dark:divide-slate-700">
-                        ${appState.clients.length ? appState.clients.map(c => renderClientRow(c)).join('') : '<p class="p-6 text-slate-500">Nenhum cliente cadastrado.</p>'}
                     </div>
                 </div>
             `;
             document.getElementById('content-area').innerHTML = html;
-            lucide.createIcons();
+            filterClients();
         }
 
         function renderClientRow(c) {
@@ -4918,12 +4926,13 @@
             `;
         }
 
-        function filterClients() {
-            const query = (document.getElementById('client-search').value || '').toLocaleLowerCase('pt-BR').trim();
-            const clients = appState.clients.filter(c => [c.name, c.taxId].some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(query)));
-            document.getElementById('client-table-body').innerHTML = clients.length
-                ? clients.map(renderClientRow).join('')
-                : '<p class="p-6 text-slate-500">Nenhum cliente encontrado.</p>';
+        function filterClients(loadMore = false) {
+            clientsVisible = loadMore ? clientsVisible + 10 : 10;
+            const query = document.getElementById('client-search').value || '';
+            const clients = matchingClients(query);
+            document.getElementById('client-table-body').innerHTML = (clients.length
+                ? clients.slice(0,clientsVisible).map(renderClientRow).join('')
+                : '<p class="p-6 text-slate-500">Nenhum cliente encontrado.</p>') + clientLoadMore(clients.length,clientsVisible,10,'filterClients');
             lucide.createIcons();
         }
 
