@@ -623,6 +623,10 @@
         }
 
         function setSaveStatus(message, error = false) {
+            if (message === 'Salvo neste aparelho e na nuvem.') {
+                document.getElementById('save-status')?.remove();
+                return;
+            }
             let banner = document.getElementById('save-status');
             if (!banner) {
                 banner = document.createElement('div');

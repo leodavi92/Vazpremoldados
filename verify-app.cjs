@@ -17,7 +17,7 @@ function functionSection(start,end) {return html.slice(html.indexOf('        fun
 const syncCode=functionSection('setSaveStatus','calculateBreakEvenData');
 function syncContext(remoteState) {
     const storage = new Map();
-    const ctx = { canonical, mergeStates, dataStorageKey:'data-test', appState: {value:1}, cloudBaseline: canonical({value:0}), pendingCloudSave:false, syncRunning:false, syncPromise:Promise.resolve(), pendingKey:'pending', firebaseReady:true, cloudSyncEnabled:true, dbDocName:'test', currentUser:{}, window:{addEventListener(){}}, localStorage:{setItem(k,v){storage.set(k,v)}, removeItem(k){storage.delete(k)}}, document:{createElement(){return {style:{}}},getElementById(){return {style:{},appendChild(){},set textContent(v){ctx.status=v}}}}, remote:remoteState };
+    const ctx = { canonical, mergeStates, dataStorageKey:'data-test', appState: {value:1}, cloudBaseline: canonical({value:0}), pendingCloudSave:false, syncRunning:false, syncPromise:Promise.resolve(), pendingKey:'pending', firebaseReady:true, cloudSyncEnabled:true, dbDocName:'test', currentUser:{}, window:{addEventListener(){}}, localStorage:{setItem(k,v){storage.set(k,v)}, removeItem(k){storage.delete(k)}}, document:{createElement(){return {style:{}}},getElementById(){return {style:{},remove(){},appendChild(){},set textContent(v){ctx.status=v}}}}, remote:remoteState };
     ctx.db={collection(){return {doc(){return {}}}}, async runTransaction(fn){await fn({async get(){return {exists:ctx.remote!==null,data(){return ctx.remote}}},set(ref,value){ctx.remote=value}})}};
     vm.createContext(ctx); vm.runInContext(syncCode,ctx);ctx.storage=storage;return ctx;
 }
