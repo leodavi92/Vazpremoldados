@@ -1885,10 +1885,11 @@
                         ${[
                             { label: 'Clientes', icon: 'users', action: "switchTab('clientes')", color: 'text-indigo-600 dark:text-indigo-300', bg: 'bg-indigo-50 dark:bg-indigo-950', hint: 'Cadastros e contatos' },
                             { label: 'Vender', icon: 'shopping-cart', action: "switchTab('vendas')", color: 'text-sky-600 dark:text-sky-300', bg: 'bg-sky-50 dark:bg-sky-950', hint: 'Vendas e pedidos' },
-                            { label: 'Gasto', icon: 'circle-minus', action: "switchTab('caixa')", color: 'text-rose-600 dark:text-rose-300', bg: 'bg-rose-50 dark:bg-rose-950', hint: 'Despesas e caixa' },
+                            { label: 'Gasto', icon: 'circle-minus', action: "switchTab('caixa'); openTransactionModal('saida')", color: 'text-rose-600 dark:text-rose-300', bg: 'bg-rose-50 dark:bg-rose-950', hint: 'Registrar despesa' },
                             { label: 'Produzir', icon: 'factory', action: "switchTab('producao')", color: 'text-orange-600 dark:text-orange-300', bg: 'bg-orange-50 dark:bg-orange-950', hint: 'Produção da fábrica' },
                             { label: 'Entregas', icon: 'truck', action: "switchTab('vendas'); switchVendasTab('entregas');", color: 'text-emerald-600 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-950', hint: 'Pedidos para entregar' },
                             { label: 'Estoque', icon: 'package', action: "switchTab('estoque')", color: 'text-blue-600 dark:text-blue-300', bg: 'bg-blue-50 dark:bg-blue-950', hint: 'Produtos e materiais' },
+                            { label: 'Investimentos', icon: 'piggy-bank', action: "switchTab('investimentos')", color: 'text-emerald-600 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-950', hint: 'Construir sua reserva' },
                             { label: 'Fluxo de caixa', icon: 'wallet', action: "switchTab('caixa')", color: 'text-teal-600 dark:text-teal-300', bg: 'bg-teal-50 dark:bg-teal-950', hint: 'Entradas e saídas' },
                             { label: 'Funcionários', icon: 'contact', action: "switchTab('funcionarios')", color: 'text-violet-600 dark:text-violet-300', bg: 'bg-violet-50 dark:bg-violet-950', hint: 'Equipe e pagamentos' },
                             { label: 'Visão geral', icon: 'chart-column', action: "switchTab('overview')", color: 'text-cyan-600 dark:text-cyan-300', bg: 'bg-cyan-50 dark:bg-cyan-950', hint: 'Indicadores e avisos' },
@@ -1910,6 +1911,39 @@
 
             `;
             try { lucide.createIcons(); } catch (_) {}
+        }
+
+        function investmentSummary() {
+            const records=appState.investmentRecords || [];
+            const month=localDate().slice(0,7);
+            return { balance: records.reduce((sum,r)=>sum+(r.type==='deposit'?r.amount:-r.amount),0), monthly:records.filter(r=>r.type==='deposit' && r.date.startsWith(month)).reduce((sum,r)=>sum+r.amount,0), goal:Number(appState.config.investmentMonthlyGoal)||0 };
+        }
+        function recordInvestment(type, amount, date, note) {
+            if (!['deposit','withdrawal'].includes(type) || !Number.isFinite(amount) || amount<=0 || !/^\d{4}-\d{2}-\d{2}$/.test(date) || date>localDate()) throw new Error('Informe um valor positivo e uma data até hoje.');
+            if (type==='withdrawal' && Math.round(amount*100)>Math.round(investmentSummary().balance*100)) throw new Error('O resgate não pode ultrapassar o saldo registrado.');
+            if (!Array.isArray(appState.investmentRecords)) appState.investmentRecords=[];
+            appState.investmentRecords.push({id:crypto.randomUUID(),type,amount:Math.round(amount*100)/100,date,note:note.trim()});
+        }
+        function renderInvestments() {
+            const {balance,monthly,goal}=investmentSummary();
+            const progress=goal>0?Math.min(100,monthly/goal*100):0;
+            const records=[...(appState.investmentRecords || [])].reverse();
+            document.getElementById('content-area').innerHTML=`<div class="max-w-3xl mx-auto space-y-4 dark:text-white">
+                <div><h2 class="text-2xl font-bold">Investimentos</h2><p class="text-sm text-slate-500 mt-1">Um pouco de cada vez para o futuro da fábrica.</p></div>
+                <div class="p-5 rounded-3xl bg-gradient-to-br from-emerald-600 to-teal-800 text-white"><p class="text-sm opacity-80">Valor separado, conforme seus registros</p><p class="text-3xl font-bold mt-2">${formatCurrency(balance)}</p><p class="text-sm mt-3">${escapeHtml(appState.config.investmentPurpose || 'Defina um objetivo para dar sentido à sua reserva.')}</p></div>
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border dark:border-slate-700 space-y-3"><div class="flex justify-between gap-3"><h3 class="font-bold">Seu hábito neste mês</h3><button onclick="openInvestmentGoal()" class="text-primary-600 font-semibold">${goal?'Editar meta':'Definir meta'}</button></div><p>${formatCurrency(monthly)} separados ${goal?'de '+formatCurrency(goal):'neste mês'}</p><div class="h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden"><div class="h-full bg-emerald-500" style="width:${progress}%"></div></div><p class="text-sm text-slate-500">${goal>0 && monthly>=goal?'Meta do mês alcançada! Você está construindo constância.':goal>0?'Faltam '+formatCurrency(Math.max(0,goal-monthly))+' para sua meta. Avance no seu ritmo.':'Escolha uma meta que caiba na rotina da fábrica.'}</p></div>
+                <div class="grid grid-cols-2 gap-3"><button onclick="openInvestmentRecord('deposit')" class="p-4 min-h-[48px] bg-emerald-600 text-white rounded-xl font-bold">Registrar valor separado</button><button onclick="openInvestmentRecord('withdrawal')" class="p-4 min-h-[48px] border rounded-xl font-semibold">Registrar resgate</button></div>
+                <p class="text-xs text-slate-500">Este espaço acompanha valores que você já separou ou resgatou. Não realiza aplicações, não calcula rendimentos e não altera o fluxo de caixa.</p>
+                <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border dark:border-slate-700"><h3 class="font-bold mb-3">Sua evolução</h3>${records.length?records.map(r=>`<div class="py-3 border-b dark:border-slate-700 flex justify-between gap-3"><div class="min-w-0"><p class="font-semibold">${r.type==='deposit'?'Valor separado':'Resgate'}</p><p class="text-xs text-slate-500">${formatDate(r.date)}</p><p class="text-sm break-words">${escapeHtml(r.note)}</p></div><strong class="shrink-0 ${r.type==='deposit'?'text-emerald-600':'text-orange-600'}">${r.type==='deposit'?'+':'−'} ${formatCurrency(r.amount)}</strong></div>`).join(''):'<p class="text-sm text-slate-500">Seu primeiro registro começa sua história aqui.</p>'}</div>
+            </div>`;
+        }
+        function openInvestmentGoal() {
+            openModal(`<form id="investment-goal-form" class="p-5 space-y-4 dark:text-white"><h3 class="text-lg font-bold">Defina seu objetivo</h3><label class="block">Quanto quer separar por mês?<input id="investment-goal" type="number" min="0.01" step="0.01" required value="${Number(appState.config.investmentMonthlyGoal)||''}" class="w-full p-3 border rounded-xl dark:bg-slate-700"></label><label class="block">Para quê?<input id="investment-purpose" maxlength="150" placeholder="Ex.: reserva da fábrica, nova máquina" value="${escapeHtml(appState.config.investmentPurpose || '')}" class="w-full p-3 border rounded-xl dark:bg-slate-700"></label><div class="grid grid-cols-2 gap-3"><button type="button" onclick="closeModal()" class="p-3 border rounded-xl">Voltar</button><button class="p-3 bg-emerald-600 text-white rounded-xl">Salvar meta</button></div></form>`);
+            document.getElementById('investment-goal-form').onsubmit=e=>{e.preventDefault();const value=Number(document.getElementById('investment-goal').value);if(!Number.isFinite(value)||value<=0)return;appState.config.investmentMonthlyGoal=Math.round(value*100)/100;appState.config.investmentPurpose=document.getElementById('investment-purpose').value.trim();saveData();closeModal();renderInvestments();};
+        }
+        function openInvestmentRecord(type) {
+            openModal(`<form id="investment-record-form" class="p-5 space-y-4 dark:text-white"><h3 class="text-lg font-bold">${type==='deposit'?'Registrar valor separado':'Registrar resgate'}</h3><label class="block">Valor<input id="investment-amount" type="number" min="0.01" step="0.01" required class="w-full p-3 border rounded-xl dark:bg-slate-700"></label><label class="block">Data<input id="investment-date" type="date" required max="${localDate()}" value="${localDate()}" class="w-full p-3 border rounded-xl dark:bg-slate-700"></label><label class="block">Observação<input id="investment-note" maxlength="200" placeholder="Ex.: reserva em conta separada" class="w-full p-3 border rounded-xl dark:bg-slate-700"></label><p id="investment-error" role="alert" class="text-red-600 text-sm"></p><div class="grid grid-cols-2 gap-3"><button type="button" onclick="closeModal()" class="p-3 border rounded-xl">Voltar</button><button class="p-3 rounded-xl bg-emerald-600 text-white">Salvar registro</button></div></form>`);
+            document.getElementById('investment-record-form').onsubmit=e=>{e.preventDefault();try{recordInvestment(type,Number(document.getElementById('investment-amount').value),document.getElementById('investment-date').value,document.getElementById('investment-note').value);saveData();closeModal();renderInvestments();}catch(error){document.getElementById('investment-error').textContent=error.message;}};
         }
 
         function renderOverview() {
@@ -9610,6 +9644,7 @@
                 case 'relatorios': renderRelatorios(); break;
                 case 'metas': renderMetas(); break;
                 case 'config': renderConfig(); break;
+                case 'investimentos': renderInvestments(); break;
             }
         }
 
