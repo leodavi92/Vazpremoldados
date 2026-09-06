@@ -2457,11 +2457,11 @@
                 const ctxPie = chartPieEl.getContext('2d');
                 
                 // Vendas por Produto (Quantidade acumulada)
-                const currentMonth = localDate().slice(0, 7);
+                const currentMonth = getBreakEvenConfig().resetDateStr.slice(0, 7);
                 const salesByProduct = {};
                 
                 appState.sales
-                    .filter(s => s.date.startsWith(currentMonth))
+                    .filter(s => s.status !== 'cancelled' && s.date.startsWith(currentMonth))
                     .forEach(s => {
                         if (s.items && Array.isArray(s.items)) {
                             s.items.forEach(item => {
@@ -2913,14 +2913,13 @@
         }
 
         // --- CASH FLOW RENDER ---
-        let cashMonth = '';
         function cashMonthTransactions() {
-            const month = cashMonth || localDate().slice(0,7);
+            const month = getBreakEvenConfig().resetDateStr.slice(0,7);
             return appState.transactions.filter(t => typeof t.date === 'string' && t.date.slice(0,7) === month);
         }
         function selectCashMonth(value) {
             if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return;
-            cashMonth=value;renderCaixa();
+            selectedReportMonth=value;renderCaixa();
         }
         function renderCaixa() {
             const balance = cashMonthTransactions().reduce((acc, t) => acc + (t.type === 'entrada' ? t.amount : -t.amount), 0);
@@ -7066,6 +7065,68 @@
         }
 
         // --- REPORTS RENDER ---
+        // Change detection only; this fingerprint is not an authentication mechanism.
+        function monthlySourceFingerprint(inputs) {
+            const text=canonical(inputs);let a=2166136261,b=5381;
+            for(let i=0;i<text.length;i++){a=Math.imul(a^text.charCodeAt(i),16777619);b=Math.imul(b,33)^text.charCodeAt(i);}
+            return text.length+':'+(a>>>0).toString(16)+':'+(b>>>0).toString(16);
+        }
+        function computeMonthlyClosing(month) {
+            const range=getMonthRange(month), start=range.start, end=range.end;
+            const moneySum=(rows,fn)=>rows.reduce((sum,row)=>sum+Math.round(fn(row)*100),0)/100;
+            const valid=appState.transactions.filter(t=>typeof t.date==='string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date) && Number.isFinite(t.amount) && t.amount>=0 && ['entrada','saida'].includes(t.type) && localDate(new Date(t.date+'T12:00:00'))===t.date);
+            const rows=valid.filter(t=>t.date>=start && t.date<=end);
+            const opening=moneySum(valid.filter(t=>t.date<start),t=>t.type==='entrada'?t.amount:-t.amount);
+            const incoming=moneySum(rows.filter(t=>t.type==='entrada'),t=>t.amount);
+            const outgoing=moneySum(rows.filter(t=>t.type==='saida'),t=>t.amount);
+            const aliveAtEnd=s=>s.status!=='cancelled' || (s.cancelledAt && localDate(new Date(s.cancelledAt))>end);
+            const salesBefore=appState.sales.filter(s=>(s.orderDate||s.date)<=end);
+            const monthSales=salesBefore.filter(s=>(s.orderDate||s.date)>=start && aliveAtEnd(s));
+            const received=s=>moneySum(valid.filter(t=>t.saleId===s.id && t.date<=end && (t.type==='entrada'||t.isSaleRefund)),t=>t.type==='entrada'?t.amount:-t.amount);
+            const receivables=moneySum(salesBefore.filter(aliveAtEnd),s=>Math.max(0,s.total-received(s)));
+            const deliveries=salesBefore.filter(s=>aliveAtEnd(s) && (s.deliveredAt || saleDeliveryState(s)==='delivered') && (s.deliveredAt||s.deliveryDate||s.date)>=start && (s.deliveredAt||s.deliveryDate||s.date)<=end);
+            const production=[...(appState.production||[]),...(appState.productionReversals||[]).filter(p=>p.reversedAt && localDate(new Date(p.reversedAt))>end)].filter(p=>p.date>=start && p.date<=end);
+            const warnings=[];
+            if(salesBefore.some(s=>s.status==='completed' && s.total>0 && received(s)===0))warnings.push('Há vendas marcadas como pagas sem recebimento vinculado. Confira antes de fechar o mês.');
+            if(month===localDate().slice(0,7))warnings.push('Mês em andamento: os resultados ainda podem mudar.');
+            if(pendingCloudSave)warnings.push('Existem alterações ainda não confirmadas na nuvem.');
+            if(valid.length!==appState.transactions.length)warnings.push('Existem lançamentos com data ou valor inválido fora dos totais.');
+            if(valid.some(t=>t.date>localDate() && t.date<=end))warnings.push('Há lançamentos em datas futuras neste período. Confira se são realizados ou previstos.');
+            if(salesBefore.some(s=>(s.items||[]).some(i=>!Number.isFinite(i.unitCost))))warnings.push('Há vendas antigas sem custo original registrado.');
+            if(deliveries.some(s=>!s.deliveredAt))warnings.push('Algumas entregas antigas usam a data legada, sem confirmação separada.');
+            if(salesBefore.some(s=>s.status==='cancelled'&&!s.cancelledAt))warnings.push('Há cancelamentos antigos sem data; confira o histórico.');
+            const inputs={transactions:valid.filter(t=>t.date<=end),sales:salesBefore,production,productionReversals:(appState.productionReversals||[]).filter(p=>p.date<=end),fixedAccounts:appState.fixedAccounts,employees:(appState.employees||[]).map(e=>({id:e.id,salary:e.salary})),salesGoal:appState.config.salesGoal};
+            return {month,start,end,opening,incoming,outgoing,result:Math.round((incoming-outgoing)*100)/100,closing:Math.round((opening+incoming-outgoing)*100)/100,salesTotal:moneySum(monthSales,s=>s.total),salesCount:monthSales.length,receivables,deliveryCount:deliveries.length,production,fees:moneySum(rows.filter(t=>t.type==='saida' && t.category==='Taxas de Cartão'),t=>t.amount),helpers:moneySum(rows.filter(t=>t.type==='saida' && (t.isHelperPayment||t.category==='Pagamento de Ajudante')),t=>t.amount),refunds:moneySum(rows.filter(t=>t.isSaleRefund),t=>t.amount),warnings,parameters:{fixedAccounts:JSON.parse(JSON.stringify(appState.fixedAccounts||[])),salaries:(appState.employees||[]).map(e=>({id:e.id,salary:e.salary})),salesGoal:appState.config.salesGoal},source:monthlySourceFingerprint(inputs)};
+        }
+        function monthlyClosingMarkup(data) {
+            const fields=[['Saldo inicial registrado',data.opening],['Entradas',data.incoming],['Saídas',data.outgoing],['Resultado do mês',data.result],['Saldo final registrado',data.closing],['Vendas do mês, líquidas de cancelamentos conhecidos',data.salesTotal],['A receber no fim do mês',data.receivables],['Taxas pagas (incluídas nas saídas)',data.fees],['Ajudantes pagos (incluídos nas saídas)',data.helpers],['Estornos (incluídos nas saídas)',data.refunds]];
+            return '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">'+fields.map(([label,value])=>'<div class="p-3 bg-slate-50 dark:bg-slate-700 rounded-xl"><p class="text-xs text-slate-500 dark:text-slate-300">'+label+'</p><strong>'+formatCurrency(value)+'</strong></div>').join('')+'</div><p class="my-3">Vendas: '+data.salesCount+' · Entregas realizadas: '+data.deliveryCount+'</p><h4 class="font-bold">Produção registrada no mês</h4>'+ (data.production.length?data.production.map(p=>'<p class="text-sm py-1">'+escapeHtml(p.productName)+' · '+escapeHtml(p.qty)+' · '+formatDate(p.date)+'</p>').join(''):'<p>Nenhuma produção registrada.</p>')+'<p class="text-xs text-slate-500 mt-3">O saldo considera os lançamentos cadastrados. Confira com suas contas bancárias. Taxas, ajudantes e estornos já estão nas saídas; não os desconte novamente. O resultado do caixa não é o lucro.</p>'+data.warnings.map(w=>'<p class="text-sm text-amber-700 dark:text-amber-400 mt-2">• '+escapeHtml(w)+'</p>').join('');
+        }
+        function openMonthlyClosing() {
+            const month=getBreakEvenConfig().resetDateStr.slice(0,7), data=computeMonthlyClosing(month);
+            const versions=(appState.monthlyClosings||[]).filter(c=>c.month===month);
+            openModal(`<div class="p-5 space-y-4 dark:text-white"><h3 class="text-xl font-bold">Fechamento mensal</h3><input aria-label="Mês do fechamento" type="month" value="${month}" onchange="selectedReportMonth=this.value;openMonthlyClosing()" class="p-3 border rounded-xl bg-white dark:bg-slate-700"><p class="text-sm">Prévia de ${formatDate(data.start)} a ${formatDate(data.end)}</p>${monthlyClosingMarkup(data)}${versions.length?'<p class="text-sm font-semibold">'+(versions.at(-1).data.source===data.source?'Dados iguais à última versão fechada.':'Há diferenças em relação à última versão. Uma revisão preservará a anterior.')+'</p>':''}<input id="monthly-close-note" placeholder="Observação / motivo da revisão" maxlength="300" class="w-full p-3 border rounded-xl dark:bg-slate-700"><button id="monthly-close-save" class="w-full p-3 rounded-xl bg-primary-600 text-white">${versions.length?'Salvar revisão do fechamento':'Fechar mês e guardar cópia'}</button><p id="monthly-close-error" role="alert" class="text-sm text-red-600"></p><h4 class="font-bold">Versões guardadas</h4>${versions.map((v,index)=>`<button onclick="viewMonthlyClosing(decodeURIComponent('${encodeURIComponent(v.id).replace(/'/g,'%27')}'))" class="w-full p-3 border rounded-xl">Versão ${v.version} · ${escapeHtml(new Date(v.createdAt).toLocaleString('pt-BR'))}</button>`).join('')||'<p class="text-sm">Nenhuma versão fechada.</p>'}<button onclick="closeModal()" class="w-full p-3 border rounded-xl">Voltar</button></div>`);
+            document.getElementById('monthly-close-save').onclick=async()=>{
+                const error=document.getElementById('monthly-close-error'),note=document.getElementById('monthly-close-note').value.trim();
+                if(month>=localDate().slice(0,7)){error.textContent='O mês precisa terminar antes do fechamento. A prévia pode ser consultada a qualquer momento.';return;}
+                if(pendingCloudSave||syncRunning||!cloudSyncEnabled){error.textContent='Confirme a sincronização dos dados antes de fechar o mês.';return;}
+                if(versions.length&&!note){error.textContent='Informe o motivo da revisão.';return;}
+                if(versions.length&&versions.at(-1).data.source===data.source){error.textContent='Não há alterações desde a última versão.';return;}
+                const button=document.getElementById('monthly-close-save');button.disabled=true;
+                if(!Array.isArray(appState.monthlyClosings))appState.monthlyClosings=[];
+                appState.monthlyClosings.push({id:month+'-v'+(versions.length+1),month,version:versions.length+1,createdAt:new Date().toISOString(),note,data:JSON.parse(JSON.stringify(data))});
+                const synced=await saveData();openMonthlyClosing();if(!synced)document.getElementById('monthly-close-error').textContent=saveOutcome==='failed'?'Não foi possível guardar a cópia neste aparelho. Não feche o app; libere espaço e tente salvar novamente.':'Cópia guardada localmente; confirme a sincronização antes de fechar o app.';
+            };
+        }
+        function viewMonthlyClosing(id) {
+            const version=(appState.monthlyClosings||[]).find(c=>c.id===id);if(!version)return;
+            openModal(`<div class="p-5 space-y-4 dark:text-white"><h3 class="text-xl font-bold">${escapeHtml(version.month)} · Versão ${version.version}</h3><p>${escapeHtml(version.note)}</p>${monthlyClosingMarkup(version.data)}<button onclick="downloadMonthlyClosing(decodeURIComponent('${encodeURIComponent(version.id).replace(/'/g,'%27')}'))" class="w-full p-3 bg-primary-600 text-white rounded-xl">Baixar fechamento</button><button onclick="openMonthlyClosing()" class="w-full p-3 border rounded-xl">Voltar</button></div>`);
+        }
+        function downloadMonthlyClosing(id) {
+            const version=(appState.monthlyClosings||[]).find(c=>c.id===id);if(!version)return;
+            const url=URL.createObjectURL(new Blob([JSON.stringify(version,null,2)],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download='fechamento-'+version.month+'-v'+version.version+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+        }
+
         function renderRelatorios() {
             let html = `
                 <div class="mb-8">
@@ -7100,7 +7161,7 @@
                             <i data-lucide="calculator" class="w-8 h-8 text-slate-600"></i>
                         </div>
                         <h4 class="font-bold dark:text-white">Custo Real</h4>
-                        <p class="text-xs text-slate-500 mt-1">Produtos + entrega (ajudantes)</p>
+                        <p class="text-xs text-slate-500 mt-1">Produtos, descontos, ajudantes e taxas</p>
                     </div>
                     <div onclick="generateReport('caixa')" class="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 hover:border-primary-500 cursor-pointer transition-all group text-center">
                         <div class="w-14 h-14 bg-orange-50 dark:bg-orange-900/20 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
@@ -7118,7 +7179,7 @@
                     </div>
                 </div>
             `;
-            document.getElementById('content-area').innerHTML = html;
+            document.getElementById('content-area').innerHTML = '<div class="mb-4 p-4 rounded-2xl bg-primary-50 dark:bg-slate-800 flex flex-wrap gap-3 items-center justify-between"><label class="text-sm dark:text-white">Mês dos relatórios <input type="month" value="'+getBreakEvenConfig().resetDateStr.slice(0,7)+'" onchange="selectReportMonth(this.value)" class="p-2 rounded-xl border dark:bg-slate-700"></label><button onclick="openMonthlyClosing()" class="p-3 rounded-xl bg-primary-600 text-white font-bold">Fechamento mensal</button></div>' + html;
             lucide.createIcons();
         }
 
@@ -7414,7 +7475,7 @@
 
         function openFinanceReportModal() {
             const now = new Date();
-            const month = localDate(now).slice(0, 7);
+            const month = getBreakEvenConfig().resetDateStr.slice(0,7);
             const range = getMonthRange(month);
 
             const html = `
@@ -7461,12 +7522,17 @@
             applyDREFilters();
         }
 
+        function allocateSaleAmount(total, items) {
+            const weights=items.map(i=>Math.max(0,(i.price||0)*(i.qty||0)));
+            const sum=weights.reduce((a,b)=>a+b,0);let used=0;
+            return items.map((item,index)=>{const cents=index===items.length-1?Math.round(total*100)-used:Math.floor(Math.round(total*100)*(sum?weights[index]/sum:1/items.length));used+=cents;return cents/100;});
+        }
         function computeRealProductCostReport(start, end, productId, clientId) {
             const sales = appState.sales.filter(s => {
-                const isConfirmedDelivery = s.status === 'completed' && !!s.deliveryDate;
+                const isConfirmedDelivery = s.status !== 'cancelled' && saleDeliveryState(s) === 'delivered';
                 if (!isConfirmedDelivery) return false;
-                if (start && s.deliveryDate < start) return false;
-                if (end && s.deliveryDate > end) return false;
+                if (start && (s.deliveredAt || s.deliveryDate || s.date) < start) return false;
+                if (end && (s.deliveredAt || s.deliveryDate || s.date) > end) return false;
                 if (clientId && String(s.clientId || 0) !== String(clientId)) return false;
                 return true;
             });
@@ -7475,23 +7541,28 @@
             sales.forEach(sale => {
                 const helperCount = sale.deliveryHelperCount ?? 1;
                 const helperFeePerUnit = sale.deliveryHelperFeePerUnit ?? 0;
-                (sale.items || []).forEach(item => {
+                const items = sale.items || [];
+                const revenues = allocateSaleAmount(sale.total || 0, items);
+                const fees = allocateSaleAmount(sale.fee || 0, items);
+                const helperShares = Number.isFinite(sale.deliveryHelperCostTotal) ? allocateSaleAmount(sale.deliveryHelperCostTotal, items) : null;
+                items.forEach((item, index) => {
                     const p = appState.inventory.find(x => x.id === item.productId);
                     if (productId && String(item.productId) !== String(productId)) return;
 
                     const qty = item.qty || 0;
                     const displayQty = item.isMeter ? (item.units || 1) : qty;
-                    const revenue = (item.price || 0) * qty;
+                    const revenue = revenues[index];
+                    const cardFee = fees[index];
                     const fabricationCost = saleItemCost(item) * qty;
                     const recordedHelper = (sale.deliveryHelperItems || []).find(h => h.productId === item.productId);
                     const effectiveHelperFee = recordedHelper ? recordedHelper.helperFee : (sale.deliveryHelperFeePerUnit ?? p?.helperFee ?? 0);
-                    const helperCost = displayQty * helperCount * effectiveHelperFee;
-                    const totalCost = fabricationCost + helperCost;
+                    const helperCost = helperShares ? helperShares[index] : displayQty * helperCount * effectiveHelperFee;
+                    const totalCost = fabricationCost + helperCost + cardFee;
                     const profit = revenue - totalCost;
 
                     rows.push({
                         saleId: sale.id,
-                        deliveryDate: sale.deliveryDate || sale.date,
+                        deliveryDate: sale.deliveredAt || sale.deliveryDate || sale.date,
                         clientId: sale.clientId || 0,
                         clientName: sale.clientName || '',
                         productId: item.productId,
@@ -7501,6 +7572,7 @@
                         isMeter: !!item.isMeter,
                         revenue,
                         fabricationCost,
+                        cardFee,
                         helperCount,
                         helperFeePerUnit: effectiveHelperFee,
                         helperCost,
@@ -7517,9 +7589,10 @@
                 acc.totalRevenue += r.revenue;
                 acc.totalFabrication += r.fabricationCost;
                 acc.totalHelpers += r.helperCost;
+                acc.totalCardFees += r.cardFee;
                 acc.totalProfit += r.profit;
                 return acc;
-            }, { totalQty: 0, totalRevenue: 0, totalFabrication: 0, totalHelpers: 0, totalProfit: 0 });
+            }, { totalQty: 0, totalRevenue: 0, totalFabrication: 0, totalHelpers: 0, totalCardFees: 0, totalProfit: 0 });
 
             return { rows, totals };
         }
@@ -7678,7 +7751,7 @@
                         </div>
                         <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
                             <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ajudantes</p>
-                            <p class="text-sm font-black text-orange-600">${formatCurrency(totals.totalHelpers)}</p>
+                            <p class="text-sm font-black text-orange-600">${formatCurrency(totals.totalHelpers)}</p><p class="text-xs text-slate-500">Taxas de cartão: ${formatCurrency(totals.totalCardFees || 0)}</p>
                         </div>
                         <div class="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 col-span-2 sm:col-span-1">
                             <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Lucro</p>
@@ -7697,7 +7770,7 @@
 
         function openRealProductCostReportModal() {
             const now = new Date();
-            const month = localDate(now).slice(0, 7);
+            const month = getBreakEvenConfig().resetDateStr.slice(0,7);
             const range = getMonthRange(month);
 
             const products = appState.inventory.filter(p => p.type === 'final').slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -7851,8 +7924,8 @@
                 title = "Relatório de Vendas e Rentabilidade";
                 
                 // Filtros de Data
-                const filterStart = document.getElementById('report-vendas-start')?.value || '';
-                const filterEnd = document.getElementById('report-vendas-end')?.value || '';
+                const filterStart = document.getElementById('report-vendas-start')?.value ?? getBreakEvenConfig().resetDateStr;
+                const filterEnd = document.getElementById('report-vendas-end')?.value ?? getBreakEvenConfig().endDateStr;
 
                 const completedSales = appState.sales.filter(s => {
                     const matchesStatus = s.status === 'completed';
@@ -8163,15 +8236,15 @@
                 const now = new Date();
                 const last30Days = new Date(now);
                 last30Days.setDate(now.getDate() - 30);
-                const defaultStart = last30Days.toISOString().split('T')[0];
-                const defaultEnd = localDate(now);
+                const defaultStart = getBreakEvenConfig().resetDateStr;
+                const defaultEnd = getBreakEvenConfig().endDateStr;
 
                 content = `
                     <div class="space-y-6">
                         <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 space-y-4">
                             <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                                 <button onclick="setCaixaReportPreset('last_7')" class="py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 font-black text-[9px] uppercase tracking-widest hover:bg-primary-50 hover:text-primary-600 transition-all">7 dias</button>
-                                <button onclick="setCaixaReportPreset('last_30')" class="py-2 rounded-xl bg-primary-600 text-white font-black text-[9px] uppercase tracking-widest hover:brightness-95 transition-all shadow-sm">30 dias</button>
+                                <button onclick="setCaixaReportPreset('last_30')" class="py-2 rounded-xl bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-black text-[9px] uppercase tracking-widest hover:brightness-95 transition-all shadow-sm">30 dias</button>
                                 <button onclick="setCaixaReportPreset('this_month')" class="py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 font-black text-[9px] uppercase tracking-widest hover:bg-primary-50 hover:text-primary-600 transition-all">Este mês</button>
                                 <button onclick="setCaixaReportPreset('all')" class="py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 font-black text-[9px] uppercase tracking-widest hover:bg-primary-50 hover:text-primary-600 transition-all">Tudo</button>
                             </div>
@@ -8413,7 +8486,7 @@
 
         function renderMetas() {
             const now = new Date();
-            const currentMonthName = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+            const currentMonthName = new Date(getBreakEvenConfig().resetDateStr+'T12:00:00').toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
             
             // LÓGICA DE DATA DE RESET (Consistente com Dashboard)
             const { resetDateStr, endDateStr, daysElapsed } = getBreakEvenConfig();
@@ -8530,14 +8603,14 @@
                 <div class="mb-8">
                     <h3 class="text-lg font-bold dark:text-white flex items-center gap-2 mb-4">
                         <i data-lucide="history" class="w-5 h-5 text-primary-500"></i>
-                        Ciclos Anteriores
+                        Histórico antigo de ciclos
                     </h3>
                     
                     ${!appState.breakEvenHistory || appState.breakEvenHistory.length === 0 ? `
                         <div class="bg-white dark:bg-slate-800 p-8 rounded-3xl border border-dashed border-slate-200 dark:border-slate-700 text-center">
                             <i data-lucide="clock" class="w-12 h-12 text-slate-300 mx-auto mb-3"></i>
-                            <p class="text-slate-400 font-medium">Nenhum ciclo encerrado ainda.</p>
-                            <p class="text-[10px] text-slate-400 uppercase mt-1">Os dados aparecerão aqui após o primeiro reset do ciclo.</p>
+                            <p class="text-slate-400 font-medium">Nenhum ciclo antigo registrado.</p>
+                            <p class="text-[10px] text-slate-400 uppercase mt-1">Para os meses atuais, consulte Relatórios → Fechamento mensal.</p>
                         </div>
                     ` : `
                         <div class="relative pl-8 space-y-6 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-200 dark:before:bg-slate-700">

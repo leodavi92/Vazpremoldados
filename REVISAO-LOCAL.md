@@ -25,3 +25,12 @@ Passaram: verify-app.cjs, verify-integrity.cjs, verify-sale-costs.cjs, verify-pa
 - Vendas antigas mantêm a inferência legada dos estados e do custo; não foram inventados dados históricos.
 - O histórico de alterações cobre as novas operações de pagamentos, cancelamentos, entregas e reagendamento, não todas as edições antigas.
 - Nenhuma alteração ou correção retroativa foi aplicada aos dados reais da fábrica.
+
+## Fechamento mensal — 06/09/2026
+
+- Caixa, produção, metas e abertura dos relatórios compartilham o mês escolhido. Filtros personalizados continuam disponíveis nos relatórios.
+- Relatórios > Fechamento mensal separa vendas pela data original do pedido, recebimentos/despesas pela data do lançamento e entregas pela confirmação. O saldo inicial vem dos lançamentos anteriores; resultado de caixa não representa lucro.
+- Mês atual permite prévia; fechamento apenas de meses terminados e sem sincronização pendente. Revisões exigem motivo e preservam versões anteriores, com download JSON. IDs por mês/versão impedem mescla silenciosa de dois fechamentos simultâneos diferentes.
+- Produções estornadas depois do mês continuam na prévia histórica. Cancelamentos posteriores respeitam a data local. Registros legados sem evidências suficientes geram avisos.
+- Custo Real passa a considerar entrega confirmada, desconto proporcional, taxas e custo de ajudantes registrado. Custos originais ausentes ainda dependem do cadastro atual; parâmetros atuais de metas não são reconstrução contábil de meses antigos.
+- Testes locais: verify-monthly-report, verify-app, verify-integrity, verify-sale-costs, verify-payments, verify-operations e verify-two-devices. A simulação de dois aparelhos não substitui a conferência nos celulares reais.
