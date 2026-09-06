@@ -1068,6 +1068,14 @@
             return { resetDateStr: month + '-01', endDateStr: month + '-' + daysInMonth, daysElapsed, daysInMonth, todayStr };
         }
 
+        function isInSelectedMonth(date) {
+            const {resetDateStr,endDateStr}=getBreakEvenConfig();
+            return typeof date==='string' && date>=resetDateStr && date<=endDateStr;
+        }
+        function historyMonthControl(refresh) {
+            return '<label class="block my-3 text-sm text-slate-500">Mês do histórico <input type="month" value="'+getBreakEvenConfig().resetDateStr.slice(0,7)+'" onchange="selectedReportMonth=this.value;'+refresh+'" class="p-2 border rounded-xl bg-white dark:bg-slate-700 dark:text-white"></label>';
+        }
+
         function selectReportMonth(month) {
             selectedReportMonth = month;
             renderContent();
@@ -3411,7 +3419,7 @@
                             </button>
                             <div>
                                 <h2 class="text-xl font-black dark:text-white uppercase tracking-tighter">Extrato Completo</h2>
-                                <p class="text-[10px] text-slate-500 font-bold uppercase">Histórico Geral de Lançamentos</p>
+                                <p class="text-[10px] text-slate-500 font-bold uppercase">Lançamentos do mês</p>${historyMonthControl('filterFullStatement()')}
                             </div>
                         </div>
                     </div>
@@ -3450,42 +3458,10 @@
             const end = document.getElementById('statement-end').value;
             const type = document.getElementById('statement-type').value;
 
-            // Agrupar transações filtradas
-            const groupedFiltered = [];
-            const processedSaleIds = new Set();
-
-            appState.transactions.slice().reverse().forEach(t => {
-                const matchesSearch = !search || t.description.toLowerCase().includes(search) || t.category.toLowerCase().includes(search);
-                const matchesType = type === '' || t.type === type;
-                const matchesDate = (!start || t.date >= start) && (!end || t.date <= end);
-
-                if (matchesSearch && matchesType && matchesDate) {
-                    if (t.saleId) {
-                        if (!processedSaleIds.has(t.saleId)) {
-                            const saleGroup = appState.transactions.filter(x => x.saleId === t.saleId);
-                            const mainEntry = saleGroup.find(x => x.type === 'entrada') || t;
-                            const sale = appState.sales.find(s => s.id === t.saleId);
-                            
-                            const totalGross = saleGroup.filter(x => x.type === 'entrada').reduce((acc, x) => acc + x.amount, 0);
-                            const totalFees = saleGroup.filter(x => x.type === 'saida' && x.category === 'Taxas de Cartão').reduce((acc, x) => acc + x.amount, 0);
-                            const totalHelper = saleGroup.filter(x => x.type === 'saida' && (x.category === 'Pagamento de Ajudante' || x.isHelperPayment)).reduce((acc, x) => acc + x.amount, 0);
-                            
-                            groupedFiltered.push({
-                                ...mainEntry,
-                                type: 'entrada',
-                                isGroup: true,
-                                amount: totalGross,
-                                fees: totalFees,
-                                helperCost: totalHelper,
-                                description: `Venda — ${sale ? sale.clientName : (mainEntry.description.split(' - ')[1] || 'Consumidor Final')}`
-                            });
-                            processedSaleIds.add(t.saleId);
-                        }
-                    } else {
-                        groupedFiltered.push({ ...t, isGroup: false });
-                    }
-                }
-            });
+            const groupedFiltered=appState.transactions.filter(t=>
+                isInSelectedMonth(t.date) && (!start || t.date>=start) && (!end || t.date<=end) &&
+                (!type || t.type===type) && (!search || (t.description||'').toLowerCase().includes(search) || (t.category||'').toLowerCase().includes(search))
+            ).slice().reverse().map(t=>({...t,isGroup:false}));
 
             document.getElementById('full-statement-list').innerHTML = groupedFiltered.map(t => renderFintechRow(t)).join('') || 
                 '<div class="p-12 text-center text-slate-400 italic">Nenhuma movimentação encontrada.</div>';
@@ -4839,14 +4815,14 @@
 
         function viewEmployeeHistory(id) {
             const emp = appState.employees.find(e => e.id === id);
-            const history = [...(emp.history || [])].reverse();
+            const history = (emp.history || []).filter(h=>isInSelectedMonth(h.date)).slice().reverse();
 
             let html = `
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
                         <div>
                             <h3 class="text-xl font-bold dark:text-white">Extrato: ${escapeHtml(emp.name)}</h3>
-                            <p class="text-xs text-slate-500 uppercase font-bold">Histórico de Vales e Pagamentos</p>
+                            <p class="text-xs text-slate-500 uppercase font-bold">Histórico de Vales e Pagamentos</p>${historyMonthControl('viewEmployeeHistory('+Number(id)+')')}
                         </div>
                         <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
                             <i data-lucide="x" class="w-5 h-5"></i>
@@ -4989,14 +4965,14 @@
 
         function openClientHistory(clientId) {
             const client = appState.clients.find(c => c.id === clientId);
-            const sales = appState.sales.filter(s => s.clientId === clientId && s.status === 'completed');
+            const sales = appState.sales.filter(s => s.clientId === clientId && s.status === 'completed' && isInSelectedMonth(s.orderDate || s.date));
             
             let html = `
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
                         <div>
                             <h3 class="text-xl font-bold dark:text-white">Histórico: ${escapeHtml(client.name)}</h3>
-                            <p class="text-xs text-slate-500">Listagem de compras concluídas</p>
+                            <p class="text-xs text-slate-500">Compras concluídas, pela data do pedido</p>${historyMonthControl('openClientHistory('+Number(clientId)+')')}
                         </div>
                         <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
                             <i data-lucide="x" class="w-5 h-5"></i>
@@ -5012,7 +4988,7 @@
                                         <span class="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold uppercase">Pago</span>
                                     </div>
                                     <p class="text-[10px] text-slate-500">
-                                        ${formatDate(s.date)} • ${s.payments && s.payments.length > 0 
+                                        ${formatDate(s.orderDate || s.date)} • ${s.payments && s.payments.length > 0
                                             ? s.payments.map(p => p.method).join(' + ')
                                             : s.paymentMethod}
                                     </p>
@@ -5025,7 +5001,7 @@
                         `).join('') : `
                             <div class="text-center py-10 text-slate-400">
                                 <i data-lucide="shopping-bag" class="w-12 h-12 mx-auto mb-2 opacity-20"></i>
-                                <p>Nenhuma compra registrada para este cliente.</p>
+                                <p>Nenhuma compra concluída neste mês para este cliente.</p>
                             </div>
                         `}
                     </div>
@@ -5179,7 +5155,7 @@
                 <div class="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
                     <div class="p-5 border-b border-slate-100 dark:border-slate-700 flex flex-col gap-4">
                         <div class="flex flex-col sm:flex-row justify-between items-center gap-4">
-                            <h4 class="font-bold uppercase text-xs tracking-widest text-slate-400">Histórico de Vendas</h4>
+                            <h4 class="font-bold uppercase text-xs tracking-widest text-slate-400">Histórico de Vendas · Data do pedido</h4>${historyMonthControl('filterSalesHistory()')}
                             <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                                 <select id="history-status-filter" onchange="filterSalesHistory()" class="px-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-primary-500/20">
                                     <option value="all">Todos os Status</option>
@@ -5307,7 +5283,7 @@
             const filteredSales = appState.sales.filter(s => {
                 const matchesSearch = (s.clientName || '').toLowerCase().includes(query);
                 const matchesStatus = statusFilter === 'all' ? (s.status === 'completed' || s.status === 'cancelled') : s.status === statusFilter;
-                return matchesSearch && matchesStatus;
+                return matchesSearch && matchesStatus && isInSelectedMonth(s.orderDate || s.date);
             });
             
             const container = document.getElementById('history-table-body');
@@ -5321,7 +5297,7 @@
                 return `
                     <tr onclick="openSaleDetailsModal(${s.id})" class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors cursor-pointer group">
                         <td class="px-6 py-4 font-bold">#${s.id}</td>
-                        <td class="px-6 py-4 font-medium text-slate-500">${formatDate(s.date)}</td>
+                        <td class="px-6 py-4 font-medium text-slate-500">${formatDate(s.orderDate || s.date)}</td>
                         <td class="px-6 py-4 font-bold text-slate-900 dark:text-white uppercase tracking-tight">${escapeHtml(s.clientName)}</td>
                         <td class="px-6 py-4">
                             <span class="px-2 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${statusColor}">${statusLabel}</span>
@@ -8726,9 +8702,9 @@
             const url=URL.createObjectURL(new Blob([backup.data],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='fabrica-backup-'+backup.day+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
         }
         function openAuditHistory() {
-            const entries=(appState.auditLog || []).slice(-100).reverse();
+            const entries=(appState.auditLog || []).filter(e=>isInSelectedMonth(localDate(new Date(e.at)))).slice().reverse();
             const labels={payment:'Recebimento',cancel:'Cancelamento / estorno',delivered:'Entrega confirmada',reschedule:'Reagendamento'};
-            openModal('<div class="p-5 dark:text-white"><h3 class="text-lg font-bold mb-4">Últimas alterações</h3>'+entries.map(e=>'<div class="p-3 border-b"><b>'+escapeHtml(labels[e.action] || e.action)+'</b> · Pedido '+escapeHtml(e.saleId)+'<p class="text-xs">'+escapeHtml(new Date(e.at).toLocaleString('pt-BR'))+'</p><p class="text-sm break-words">'+escapeHtml(JSON.stringify(e.details))+'</p></div>').join('')+(!entries.length?'<p>Nenhuma alteração registrada nesta versão.</p>':'')+'<button onclick="closeModal()" class="w-full p-3 border rounded-xl mt-3">Voltar</button></div>');
+            openModal('<div class="p-5 dark:text-white"><h3 class="text-lg font-bold mb-4">Alterações do mês</h3>'+historyMonthControl('openAuditHistory()')+entries.map(e=>'<div class="p-3 border-b"><b>'+escapeHtml(labels[e.action] || e.action)+'</b> · Pedido '+escapeHtml(e.saleId)+'<p class="text-xs">'+escapeHtml(new Date(e.at).toLocaleString('pt-BR'))+'</p><p class="text-sm break-words">'+escapeHtml(JSON.stringify(e.details))+'</p></div>').join('')+(!entries.length?'<p>Nenhuma alteração registrada nesta versão.</p>':'')+'<button onclick="closeModal()" class="w-full p-3 border rounded-xl mt-3">Voltar</button></div>');
         }
 
         function renderConfig() {
