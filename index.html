@@ -3125,7 +3125,7 @@
                             <div class="divide-y divide-slate-50 dark:divide-slate-700/50">
                                 ${payments.map(p => `
                                     <div class="px-4 py-3 flex justify-between items-center">
-                                        <span class="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">${p.paymentMethod}</span>
+                                        <span class="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">${escapeHtml(transactionPaymentLabel(p))}</span>
                                         <span class="text-xs font-black text-slate-900 dark:text-white">${formatCurrency(p.amount)}</span>
                                     </div>
                                 `).join('')}
@@ -3269,6 +3269,19 @@
             showToast('Os lançamentos vinculados a vendas estão protegidos contra exclusão para manter o caixa e o histórico consistentes.', 'error');
         }
 
+        function transactionPaymentLabel(transaction) {
+            const method = transaction.paymentMethod || 'Não informado';
+            if (!/crédito/i.test(method)) return method;
+            let installments = transaction.installments;
+            if (!Number.isInteger(installments) || installments < 1) {
+                const sale = appState.sales.find(s => s.id === transaction.saleId);
+                const candidates = (sale?.payments || []).filter(p => p.method === method && Math.round(p.amount * 100) === Math.round(transaction.amount * 100));
+                if (candidates.length === 1) installments = candidates[0].installments;
+                else if (!(sale?.payments || []).length && sale?.paymentMethod === method) installments = sale.installments;
+            }
+            return method + (Number.isInteger(installments) && installments > 0 ? ' em ' + installments + 'x' : ' · parcelas não registradas');
+        }
+
         function openTransactionDetails(id) {
             const t = appState.transactions.find(x => x.id === id);
             if (!t) return;
@@ -3309,7 +3322,7 @@
                         </div>
                         <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-2xl flex justify-between items-center">
                             <span class="text-xs font-bold text-slate-400 uppercase">Forma de Pagto</span>
-                            <span class="text-sm font-black text-slate-900 dark:text-white uppercase">${t.paymentMethod || 'Não informado'}</span>
+                            <span class="text-sm font-black text-slate-900 dark:text-white uppercase">${escapeHtml(transactionPaymentLabel(t))}</span>
                         </div>
                         <div class="bg-slate-50 dark:bg-slate-700/50 p-4 rounded-2xl flex justify-between items-center">
                             <span class="text-xs font-bold text-slate-400 uppercase">Conta Origem</span>
@@ -5637,7 +5650,8 @@
                         date: finalDate,
                         description: `Recebimento Pedido #${sId} (${payment.method}) - ${escapeHtml(sale.clientName)}`,
                         account: 'Caixa Principal',
-                        paymentMethod: payment.method
+                        paymentMethod: payment.method,
+                        installments: payment.installments || 1
                     });
 
                     if (payment.method.toLowerCase().includes('cartão')) {
@@ -5663,7 +5677,8 @@
                                 date: finalDate,
                                 description: `Taxa ${payment.method} - Pedido #${sId}`,
                                 account: 'Caixa Principal',
-                                paymentMethod: payment.method
+                                paymentMethod: payment.method,
+                        installments: payment.installments || 1
                             });
                         }
                     }
@@ -6433,7 +6448,8 @@
                         date: sale.date,
                         description: `Venda #${saleId} (${payment.method}) - ${escapeHtml(sale.clientName)}`,
                         account: 'Caixa Principal',
-                        paymentMethod: payment.method
+                        paymentMethod: payment.method,
+                        installments: payment.installments || 1
                     });
 
                     // Saída (Taxa de Cartão) se houver
@@ -6460,7 +6476,8 @@
                                 date: sale.date,
                                 description: `Taxa ${payment.method} - Venda #${saleId}`,
                                 account: 'Caixa Principal',
-                                paymentMethod: payment.method
+                                paymentMethod: payment.method,
+                        installments: payment.installments || 1
                             });
                         }
                     }
