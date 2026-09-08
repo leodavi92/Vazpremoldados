@@ -9548,6 +9548,25 @@
             });
         }
 
+
+        function capitalizeEntry(event) {
+            const field=event.target;
+            if (!field || field.disabled || field.readOnly || field.dataset?.autocapitalize==='off') return;
+            const type=(field.type||'text').toLowerCase();
+            if (!(field.tagName==='TEXTAREA' || (field.tagName==='INPUT' && type==='text'))) return;
+            if (/email|mail|password|senha|token|url|search|busca/i.test(field.id||'')) return;
+            field.setAttribute('autocapitalize','sentences');
+            if(event.type==='focusin' || event.isComposing) return;
+            const value=field.value;
+            const next=value.replace(/^(\s*)([a-zà-öø-ÿ])/u,(_,space,letter)=>space+letter.toLocaleUpperCase('pt-BR'));
+            if(next===value) return;
+            const start=field.selectionStart,end=field.selectionEnd,direction=field.selectionDirection;
+            field.value=next;
+            if(start!==null && end!==null)field.setSelectionRange(start,end,direction||'none');
+        }
+        document.addEventListener('focusin',capitalizeEntry,true);
+        document.addEventListener('input',capitalizeEntry,true);
+        document.addEventListener('compositionend',capitalizeEntry,true);
     </script>
 
     <!-- INSTRUÇÕES DE USO -->
