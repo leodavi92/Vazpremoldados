@@ -6723,15 +6723,16 @@
                 table(['INFORMAÇÕES COMERCIAIS'],[[
                     'Somente os pilares para caixa d’água incluem entrega e instalação. Essa instalação refere-se apenas ao posicionamento do pilar para caixa d’água. Manilhas e tampas possuem somente serviço de entrega.\nGarantia: 1 ano contra defeitos de fabricação.\nPilar para caixa d’água: aguarde o prazo mínimo de 5 dias antes de instalar ou colocar a caixa d’água.'+(sale.notes?'\nObservações do pedido: '+text(sale.notes):'')
                 ]]);
-                if(y>253){doc.addPage();y=24;}
-                const signY=Math.max(y+12,265);
+                if(y>249){doc.addPage();y=24;}
+                const signY=Math.max(y+16,265);
                 doc.setDrawColor(210,218,226);doc.setLineWidth(0.3);doc.line(25,signY,92,signY);doc.line(118,signY,185,signY);
                 doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...gray);
+                doc.setDrawColor(...navy);doc.setTextColor(...navy);doc.setLineWidth(0.4);doc.roundedRect(28,signY-13,61,10,1,1);doc.setFont('helvetica','bolditalic');doc.setFontSize(12);doc.text('Vaz Pré-moldados',58.5,signY-6.5,{align:'center'});doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...gray);
                 doc.text('RESPONSÁVEL PELA EMPRESA',58.5,signY+4,{align:'center'});doc.text('ASSINATURA DO CLIENTE',151.5,signY+4,{align:'center'});
                 const pages=doc.getNumberOfPages();
                 for(let p=1;p<=pages;p++){
                     doc.setPage(p);doc.setDrawColor(210,218,226);doc.line(14,280,196,280);doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...gray);
-                    doc.text('DOCUMENTO COMERCIAL · NÃO É DOCUMENTO FISCAL',14,285);
+
                     doc.text('Pedido '+sale.id+' · Página '+p+'/'+pages,196,285,{align:'right'});
                 }
                 doc.save('RECIBO_PEDIDO_'+String(sale.id).replace(/[^a-zA-Z0-9_-]/g,'')+'.pdf');
@@ -8601,6 +8602,10 @@
                                     <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">CNPJ</label>
                                     <input type="text" id="conf-cnpj" value="${appState.config.cnpj}" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
                                 </div>
+                                <div>
+                                    <label for="conf-phone" class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Telefone / WhatsApp da empresa</label>
+                                    <input type="tel" id="conf-phone" value="${escapeHtml(appState.config.phone || '')}" placeholder="(65) 99999-9999" class="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold">
+                                </div>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                                     <div>
                                         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rua / Avenida</label>
@@ -9239,6 +9244,8 @@
         function saveConfig() {
              appState.config.companyName = document.getElementById('conf-name').value;
              appState.config.cnpj = document.getElementById('conf-cnpj').value;
+             const phoneEl = document.getElementById('conf-phone');
+             if (phoneEl) appState.config.phone = phoneEl.value.trim();
              const streetEl = document.getElementById('conf-addr-street');
              const numberEl = document.getElementById('conf-addr-number');
              const neighEl = document.getElementById('conf-addr-neighborhood');
