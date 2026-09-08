@@ -6667,242 +6667,61 @@
         // --- PDF GENERATION ---
         function generateReceiptPDF(sale) {
             try {
-                if (!window.jspdf) {
-                    showToast('Erro: Biblioteca PDF não encontrada.', 'error');
-                    return;
+                if (!window.jspdf) throw new Error('Biblioteca PDF indisponível. Tente novamente com internet.');
+                const doc = new window.jspdf.jsPDF();
+                if (typeof doc.autoTable !== 'function') throw new Error('Biblioteca de tabelas indisponível.');
+                const config=appState.config, client=appState.clients.find(c=>c.id===sale.clientId)||{};
+                const text=v=>String(v??'').replace(/\u00a0/g,' ');
+                const money=v=>text(formatCurrency(v));
+                const receipts=appState.transactions.filter(t=>t.saleId===sale.id && (t.type==='entrada'||t.isSaleRefund));
+                const received=saleReceived(sale), cancelled=sale.status==='cancelled';
+                const paid=received>=sale.total && sale.total>0 && !cancelled;
+                const title=cancelled?'PEDIDO CANCELADO':paid?'RECIBO DE PAGAMENTO':received>0?'RECIBO PARCIAL / PEDIDO':'PEDIDO DE VENDA';
+                const navy=[30,55,76], gray=[100,116,139];
+                let y=16;
+                const table=(head,body,widths)=>{
+                    doc.autoTable({startY:y,head:[head],body,theme:'grid',margin:{top:16,bottom:20,left:14,right:14},
+                        styles:{font:'helvetica',fontSize:8,cellPadding:2.8,textColor:[30,41,59],lineColor:[210,218,226],lineWidth:0.15,overflow:'linebreak'},
+                        headStyles:{fillColor:navy,textColor:255,fontStyle:'bold'},columnStyles:widths||{},rowPageBreak:'avoid'});
+                    y=doc.lastAutoTable.finalY+5;
+                };
+                table([text(config.companyName||'Fábrica'),title],[[
+                    ['CNPJ: '+(config.cnpj||'Não informado'),config.address||'', 'Contato: '+(config.phone||'Não informado')].map(text).join('\n'),
+                    'Pedido nº '+sale.id+'\nData do pedido: '+formatDate(sale.orderDate||sale.date)+'\nEmitido em: '+formatDate(localDate())+'\nNÃO É DOCUMENTO FISCAL'
+                ]],{0:{cellWidth:110},1:{cellWidth:72}});
+                table(['CLIENTE / DESTINATÁRIO','ENDEREÇO CADASTRADO'],[[
+                    text(sale.clientName||client.name||'Consumidor Final')+'\nCPF/CNPJ: '+text(client.taxId||'Não informado')+'\nTelefone: '+text(client.phone||'Não informado'),
+                    text(client.address||[client.street,client.number,client.neighborhood,client.city,client.state].filter(Boolean).join(', ')||'Não informado')+(client.reference?'\nReferência: '+text(client.reference):'')
+                ]],{0:{cellWidth:91},1:{cellWidth:91}});
+                table(['ITEM','DESCRIÇÃO DO PRODUTO / SERVIÇO','UN.','QTD.','V. UNITÁRIO','V. TOTAL'],(sale.items||[]).map((i,n)=>[
+                    String(n+1),text(i.name)+(i.isMeter?'\n'+(i.units||1)+' peça(s) de '+(i.lengthPerUnit||'—')+' m':''),i.isMeter?'m':'un',String(i.qty),money(i.price),money(i.price*i.qty)
+                ]),{0:{cellWidth:12},1:{cellWidth:76},2:{cellWidth:12},3:{cellWidth:16,halign:'right'},4:{cellWidth:32,halign:'right'},5:{cellWidth:34,halign:'right'}});
+                table(['RESUMO DO PEDIDO','VALOR'],[
+                    ['Subtotal',money(sale.total+(sale.discount||0))],['Desconto',money(sale.discount||0)],['TOTAL DO PEDIDO',money(sale.total)],
+                    ['Recebido líquido de estornos registrados',money(received)],['Saldo a receber',cancelled?'Pedido cancelado':money(Math.max(0,sale.total-received))]
+                ],{0:{cellWidth:130},1:{cellWidth:52,halign:'right',fontStyle:'bold'}});
+                const method=p=>text(p.paymentMethod||p.method||'Não informado')+((p.paymentMethod||p.method)==='Cartão de Crédito'?' · '+(p.installments? p.installments+'x':'parcelas não registradas'):'');
+                if(receipts.length) table(['RECEBIMENTOS / ESTORNOS','FORMA DE PAGAMENTO','VALOR'],receipts.map(t=>[
+                    (t.isSaleRefund?'Estorno · ':'Recebimento · ')+formatDate(t.date),method(t),money(t.amount)
+                ]),{0:{cellWidth:65},1:{cellWidth:77},2:{cellWidth:40,halign:'right'}});
+                if(!paid && !cancelled && (sale.payments||[]).length) table(['CONDIÇÕES DO PEDIDO (NÃO COMPROVAM RECEBIMENTO)','VALOR'],sale.payments.map(p=>[method(p),money(p.amount)]));
+                table(['ENTREGA / SITUAÇÃO'],[[
+                    'Situação: '+(cancelled?'Cancelado':paid?'Pago':received>0?'Pagamento parcial':'Sem recebimento registrado')+
+                    '\nEntrega prevista: '+(sale.deliveryDate?formatDate(sale.deliveryDate):'A combinar')+(sale.deliveryTime?' às '+sale.deliveryTime:'')+
+                    (sale.deliveredAt?'\nEntrega confirmada em: '+formatDate(sale.deliveredAt):'')+
+                    '\n'+(cancelled?'Este documento não representa um pedido ativo.':paid?'Pagamento integral registrado para este pedido.':received>0?'Este recibo comprova apenas os recebimentos relacionados acima.':'Este pedido não comprova pagamento.')
+                ]]);
+                table(['INFORMAÇÕES COMERCIAIS'],[[
+                    'Pilares incluem entrega e instalação do pré-moldado. A instalação refere-se apenas ao posicionamento do pré-moldado. Manilhas e tampas possuem somente entrega.\nGarantia: 1 ano contra defeitos de fabricação.\nPilar para caixa d’água: aguarde o prazo mínimo de 5 dias antes de instalar ou colocar a caixa d’água.'+(sale.notes?'\nObservações do pedido: '+text(sale.notes):'')
+                ]]);
+                const pages=doc.getNumberOfPages();
+                for(let p=1;p<=pages;p++){
+                    doc.setPage(p);doc.setDrawColor(210,218,226);doc.line(14,280,196,280);doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...gray);
+                    doc.text('DOCUMENTO COMERCIAL · NÃO É DOCUMENTO FISCAL',14,285);
+                    doc.text('Pedido '+sale.id+' · Página '+p+'/'+pages,196,285,{align:'right'});
                 }
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF();
-                const config = appState.config;
-                const client = appState.clients.find(c => c.id === sale.clientId);
-                
-                // --- DESIGN MODERNO / PREMIUM ---
-                const accentColor = [14, 165, 233]; // Sky-500
-                const darkText = [30, 41, 59]; // Slate-800
-                const grayText = [100, 116, 139]; // Slate-500
-                const lightGray = [241, 245, 249]; // Slate-100
-
-                // 1. Cabeçalho Minimalista (Lado a Lado)
-                doc.setFontSize(22);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text(config.companyName.toUpperCase(), 15, 25);
-                
-                doc.setFontSize(10);
-                doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-                doc.setFont(undefined, 'normal');
-                doc.text(`CNPJ: ${config.cnpj}`, 15, 32);
-                doc.text(`${escapeHtml(config.address)}`, 15, 37);
-                doc.text(`WHATSAPP/TEL: ${escapeHtml(config.phone)}`, 15, 42);
-
-                // Título (Canto Direito)
-                doc.setFontSize(26);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(lightGray[0], lightGray[1], lightGray[2]);
-                doc.text('PEDIDO', 195, 25, { align: 'right' });
-                
-                doc.setFontSize(12);
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text(`#${sale.id}`, 195, 32, { align: 'right' });
-                doc.setFontSize(9);
-                doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-                doc.text(`Emissão: ${formatDate(sale.date)}`, 195, 38, { align: 'right' });
-
-                // Linha Divisória Elegante
-                doc.setDrawColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.setLineWidth(0.8);
-                doc.line(15, 48, 195, 48);
-
-                // 2. Seção do Cliente (Estilo Dashboard)
-                const clientY = 60;
-                doc.setFontSize(9);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text('DADOS DO CLIENTE', 15, clientY);
-                
-                doc.setFontSize(10);
-                doc.setTextColor(darkText[0], darkText[1], darkText[2]);
-                doc.text(sale.clientName.toUpperCase(), 15, clientY + 7);
-                
-                doc.setFontSize(8);
-                doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-                doc.setFont(undefined, 'normal');
-                doc.text(`CPF/CNPJ: ${client?.taxId || '---'}`, 15, clientY + 13);
-                doc.text(`TELEFONE: ${client?.phone || '---'}`, 15, clientY + 18);
-
-                // Endereço (Coluna Direita)
-                doc.setFontSize(9);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text('ENDEREÇO DE ENTREGA', 105, clientY);
-                
-                doc.setFontSize(8);
-                doc.setTextColor(darkText[0], darkText[1], darkText[2]);
-                doc.setFont(undefined, 'normal');
-                
-                const addrLine1 = `${client?.street || '---'}, Nº ${client?.number || 'S/N'}`;
-                const addrLine2 = `Bairro: ${client?.neighborhood || '---'} | QD: ${client?.block || '---'}`;
-                const addrLine3 = `${client?.city || '---'} - ${client?.state?.toUpperCase() || '--'}`;
-                const addrLine4 = `Ref: ${client?.reference || 'Sem referência'}`;
-
-                doc.text(addrLine1.toUpperCase(), 105, clientY + 7);
-                doc.text(addrLine2.toUpperCase(), 105, clientY + 12);
-                doc.text(addrLine3.toUpperCase(), 105, clientY + 17);
-                doc.setFont(undefined, 'italic');
-                doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-                doc.text(addrLine4.toUpperCase(), 105, clientY + 22);
-
-                // 3. Tabela de Itens (Estilo Excel Moderno)
-                const tableData = sale.items.map((item, index) => {
-                    let itemName = item.name.toUpperCase();
-                    if (item.isMeter) {
-                        itemName += `\n${item.units} UNIDADES DE ${item.lengthPerUnit}M`;
-                    }
-                    return [
-                        index + 1,
-                        itemName,
-                        `${item.qty}${item.isMeter ? 'm' : ''}`,
-                        formatCurrency(item.price),
-                        formatCurrency(item.price * item.qty)
-                    ];
-                });
-
-                if (typeof doc.autoTable !== 'function') {
-                    showToast('Erro: Biblioteca de tabelas não carregada.', 'error');
-                    doc.save(`PEDIDO_${sale.id}.pdf`);
-                    return;
-                }
-
-                doc.autoTable({
-                    startY: clientY + 32,
-                    head: [['#', 'DESCRIÇÃO DOS PRODUTOS / SERVIÇOS', 'QTD', 'VALOR UNIT.', 'TOTAL']],
-                    body: tableData,
-                    theme: 'striped',
-                    headStyles: { 
-                        fillColor: [255, 255, 255], 
-                        textColor: accentColor,
-                        fontSize: 8,
-                        fontStyle: 'bold',
-                        halign: 'center',
-                        lineWidth: 0.1,
-                        lineColor: [226, 232, 240] // border-slate-200
-                    },
-                    columnStyles: {
-                        0: { halign: 'center', cellWidth: 10 },
-                        1: { halign: 'left' },
-                        2: { halign: 'center', cellWidth: 20 },
-                        3: { halign: 'right', cellWidth: 35 },
-                        4: { halign: 'right', cellWidth: 35, fontStyle: 'bold' }
-                    },
-                    styles: { 
-                        fontSize: 8, 
-                        cellPadding: 4, 
-                        lineColor: [241, 245, 249], 
-                        lineWidth: 0.1,
-                        textColor: darkText
-                    },
-                    alternateRowStyles: {
-                        fillColor: [250, 251, 252]
-                    },
-                    margin: { left: 15, right: 15 }
-                });
-
-                // 4. Totais e Pagamento (Estilo Fatura Premium)
-                const finalY = doc.lastAutoTable.finalY + 10;
-                
-                // Informações de Pagamento (Esquerda)
-                doc.setFontSize(8);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text('MÉTODO DE PAGAMENTO', 15, finalY);
-                doc.setFont(undefined, 'normal');
-                doc.setTextColor(darkText[0], darkText[1], darkText[2]);
-                const paymentText = (sale.payments && sale.payments.length > 0) 
-                    ? sale.payments.map(p => `${p.method} (${formatCurrency(p.amount)})`).join(' + ')
-                    : (sale.paymentMethod || 'NÃO INFORMADO');
-                doc.text(`${paymentText.toUpperCase()}${sale.installments > 1 ? ` (${sale.installments}X)` : ''}`, 15, finalY + 5);
-
-                // Box de Resumo (Direita)
-                const summaryX = 135;
-                doc.setDrawColor(241, 245, 249);
-                doc.setFillColor(255, 255, 255);
-                doc.rect(summaryX, finalY - 5, 60, 30);
-                
-                doc.setFontSize(8);
-                doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-                doc.text('SUBTOTAL:', summaryX + 5, finalY + 3);
-                const subtotal = sale.total + (sale.discount || 0);
-                doc.text(formatCurrency(subtotal), 190, finalY + 3, { align: 'right' });
-
-                doc.text('DESCONTO:', summaryX + 5, finalY + 10);
-                doc.setTextColor(sale.discount > 0 ? 239 : grayText[0], sale.discount > 0 ? 68 : grayText[1], sale.discount > 0 ? 68 : grayText[2]);
-                doc.text(`- ${formatCurrency(sale.discount || 0)}`, 190, finalY + 10, { align: 'right' });
-
-                doc.setDrawColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.line(summaryX + 5, finalY + 15, 190, finalY + 15);
-
-                doc.setFontSize(11);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text('TOTAL:', summaryX + 5, finalY + 22);
-                doc.text(formatCurrency(sale.total), 190, finalY + 22, { align: 'right' });
-
-                // 5. Seção de Informações Importantes
-                const infoY = finalY + 35;
-                doc.setDrawColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.setLineWidth(0.5);
-                doc.line(15, infoY, 195, infoY);
-                
-                doc.setFontSize(10);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text('INFORMAÇÕES IMPORTANTES', 15, infoY + 7);
-                
-                doc.setFontSize(8);
-                doc.setTextColor(darkText[0], darkText[1], darkText[2]);
-                
-                // Encomenda de Serviços
-                doc.setFont(undefined, 'bold');
-                doc.text('ENCOMENDA DE SERVIÇOS E ORÇAMENTOS', 15, infoY + 14);
-                doc.setFont(undefined, 'normal');
-                doc.text('• Pilares incluem entrega e instalação do pré-moldado.', 15, infoY + 19);
-                doc.text('• A instalação refere-se apenas ao posicionamento do pré-moldado.', 15, infoY + 24);
-                doc.text('• Manilhas e tampas possuem somente serviço de entrega.', 15, infoY + 29);
-                
-                // Garantia
-                doc.setFont(undefined, 'bold');
-                doc.text('GARANTIA DOS PRODUTOS', 15, infoY + 37);
-                doc.setFont(undefined, 'normal');
-                doc.text('Todos os produtos possuem garantia de 1 (um) ano contra defeitos de fabricação.', 15, infoY + 42);
-                
-                // Recomendação
-                doc.setFont(undefined, 'bold');
-                doc.text('RECOMENDAÇÃO PARA PILAR DE CAIXA D\'ÁGUA', 15, infoY + 50);
-                doc.setFont(undefined, 'normal');
-                doc.text('Após a instalação do pilar para caixa d\'água, recomenda-se aguardar', 15, infoY + 55);
-                doc.text('o prazo mínimo de 5 dias antes de instalar ou colocar a caixa d\'água.', 15, infoY + 60);
-
-                // 6. Assinaturas e Rodapé
-                const signY = 270;
-                doc.setDrawColor(226, 232, 240);
-                doc.setLineWidth(0.5);
-                doc.line(30, signY, 90, signY);
-                doc.line(120, signY, 180, signY);
-                
-                doc.setFontSize(7);
-                doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-                doc.text(config.companyName.toUpperCase(), 60, signY + 4, { align: 'center' });
-                doc.text('ASSINATURA DO CLIENTE', 150, signY + 4, { align: 'center' });
-
-                doc.setFontSize(7);
-                doc.setTextColor(lightGray[0], lightGray[1], lightGray[2]);
-                doc.text('Documento gerado digitalmente pelo sistema de gestão da fábrica.', 105, 285, { align: 'center' });
-
-                doc.save(`PEDIDO_${sale.id}_${sale.clientName.replace(/\s+/g, '_')}.pdf`);
-            } catch (err) {
-                console.error('Erro ao gerar PDF:', err);
-                showToast('Erro ao gerar PDF: ' + err.message, 'error');
-            }
+                doc.save('RECIBO_PEDIDO_'+String(sale.id).replace(/[^a-zA-Z0-9_-]/g,'')+'.pdf');
+            } catch(err) { console.error('Erro ao gerar PDF:',err);showToast('Não foi possível gerar o recibo: '+err.message,'error'); }
         }
 
         function generateQuotePDF(quote) {
