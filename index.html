@@ -6677,18 +6677,27 @@
                 const received=saleReceived(sale), cancelled=sale.status==='cancelled';
                 const paid=received>=sale.total && sale.total>0 && !cancelled;
                 const title=cancelled?'PEDIDO CANCELADO':paid?'RECIBO DE PAGAMENTO':received>0?'RECIBO PARCIAL / PEDIDO':'PEDIDO DE VENDA';
-                const navy=[30,55,76], gray=[100,116,139];
+                const navy=[14,165,233], gray=[100,116,139];
                 let y=16;
                 const table=(head,body,widths)=>{
                     doc.autoTable({startY:y,head:[head],body,theme:'grid',margin:{top:16,bottom:20,left:14,right:14},
-                        styles:{font:'helvetica',fontSize:8,cellPadding:2.8,textColor:[30,41,59],lineColor:[210,218,226],lineWidth:0.15,overflow:'linebreak'},
-                        headStyles:{fillColor:navy,textColor:255,fontStyle:'bold'},columnStyles:widths||{},rowPageBreak:'avoid'});
-                    y=doc.lastAutoTable.finalY+5;
+                        styles:{font:'helvetica',fontSize:8,cellPadding:2,textColor:[30,41,59],lineColor:[210,218,226],lineWidth:0.15,overflow:'linebreak'},
+                        headStyles:{fillColor:[240,249,255],textColor:navy,fontStyle:'bold'},alternateRowStyles:{fillColor:[250,251,252]},columnStyles:widths||{},rowPageBreak:'avoid'});
+                    y=doc.lastAutoTable.finalY+4;
                 };
-                table([text(config.companyName||'Fábrica'),title],[[
-                    ['CNPJ: '+(config.cnpj||'Não informado'),config.address||'', 'Contato: '+(config.phone||'Não informado')].map(text).join('\n'),
-                    'Pedido nº '+sale.id+'\nData do pedido: '+formatDate(sale.orderDate||sale.date)+'\nEmitido em: '+formatDate(localDate())+'\nNÃO É DOCUMENTO FISCAL'
-                ]],{0:{cellWidth:110},1:{cellWidth:72}});
+                doc.setFont('helvetica','bold');doc.setFontSize(19);doc.setTextColor(...navy);
+                const companyLines=doc.splitTextToSize(text(config.companyName||'Fábrica').toUpperCase(),128);
+                doc.text(companyLines,14,22);
+                doc.setFontSize(22);doc.setTextColor(215,225,233);doc.text('PEDIDO',196,22,{align:'right'});
+                doc.setFontSize(9);doc.setTextColor(...navy);doc.text('#'+sale.id,196,29,{align:'right'});
+                doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(...gray);
+                doc.text('Pedido: '+formatDate(sale.orderDate||sale.date),196,35,{align:'right'});
+                doc.text('Emissão: '+formatDate(localDate()),196,40,{align:'right'});
+                const companyY=24+companyLines.length*7;
+                const companyInfo=doc.splitTextToSize('CNPJ: '+text(config.cnpj||'Não informado')+'\n'+text(config.address||'')+'\nWHATSAPP/TEL: '+text(config.phone||'Não informado'),125);
+                doc.text(companyInfo,14,companyY);
+                y=Math.max(46,companyY+companyInfo.length*4+4);
+                doc.setDrawColor(...navy);doc.setLineWidth(0.7);doc.line(14,y,196,y);y+=6;
                 table(['CLIENTE / DESTINATÁRIO','ENDEREÇO CADASTRADO'],[[
                     text(sale.clientName||client.name||'Consumidor Final')+'\nCPF/CNPJ: '+text(client.taxId||'Não informado')+'\nTelefone: '+text(client.phone||'Não informado'),
                     text(client.address||[client.street,client.number,client.neighborhood,client.city,client.state].filter(Boolean).join(', ')||'Não informado')+(client.reference?'\nReferência: '+text(client.reference):'')
@@ -6696,7 +6705,7 @@
                 table(['ITEM','DESCRIÇÃO DO PRODUTO / SERVIÇO','UN.','QTD.','V. UNITÁRIO','V. TOTAL'],(sale.items||[]).map((i,n)=>[
                     String(n+1),text(i.name)+(i.isMeter?'\n'+(i.units||1)+' peça(s) de '+(i.lengthPerUnit||'—')+' m':''),i.isMeter?'m':'un',String(i.qty),money(i.price),money(i.price*i.qty)
                 ]),{0:{cellWidth:12},1:{cellWidth:76},2:{cellWidth:12},3:{cellWidth:16,halign:'right'},4:{cellWidth:32,halign:'right'},5:{cellWidth:34,halign:'right'}});
-                table(['RESUMO DO PEDIDO','VALOR'],[
+                table(['RESUMO DO PEDIDO / PAGAMENTO','VALOR'],[
                     ['Subtotal',money(sale.total+(sale.discount||0))],['Desconto',money(sale.discount||0)],['TOTAL DO PEDIDO',money(sale.total)],
                     ['Recebido líquido de estornos registrados',money(received)],['Saldo a receber',cancelled?'Pedido cancelado':money(Math.max(0,sale.total-received))]
                 ],{0:{cellWidth:130},1:{cellWidth:52,halign:'right',fontStyle:'bold'}});
@@ -6706,14 +6715,19 @@
                 ]),{0:{cellWidth:65},1:{cellWidth:77},2:{cellWidth:40,halign:'right'}});
                 if(!paid && !cancelled && (sale.payments||[]).length) table(['CONDIÇÕES DO PEDIDO (NÃO COMPROVAM RECEBIMENTO)','VALOR'],sale.payments.map(p=>[method(p),money(p.amount)]));
                 table(['ENTREGA / SITUAÇÃO'],[[
-                    'Situação: '+(cancelled?'Cancelado':paid?'Pago':received>0?'Pagamento parcial':'Sem recebimento registrado')+
+                    title+'\nSituação: '+(cancelled?'Cancelado':paid?'Pago':received>0?'Pagamento parcial':'Sem recebimento registrado')+
                     '\nEntrega prevista: '+(sale.deliveryDate?formatDate(sale.deliveryDate):'A combinar')+(sale.deliveryTime?' às '+sale.deliveryTime:'')+
                     (sale.deliveredAt?'\nEntrega confirmada em: '+formatDate(sale.deliveredAt):'')+
                     '\n'+(cancelled?'Este documento não representa um pedido ativo.':paid?'Pagamento integral registrado para este pedido.':received>0?'Este recibo comprova apenas os recebimentos relacionados acima.':'Este pedido não comprova pagamento.')
                 ]]);
                 table(['INFORMAÇÕES COMERCIAIS'],[[
-                    'Pilares incluem entrega e instalação do pré-moldado. A instalação refere-se apenas ao posicionamento do pré-moldado. Manilhas e tampas possuem somente entrega.\nGarantia: 1 ano contra defeitos de fabricação.\nPilar para caixa d’água: aguarde o prazo mínimo de 5 dias antes de instalar ou colocar a caixa d’água.'+(sale.notes?'\nObservações do pedido: '+text(sale.notes):'')
+                    'Somente os pilares para caixa d’água incluem entrega e instalação. Essa instalação refere-se apenas ao posicionamento do pilar para caixa d’água. Manilhas e tampas possuem somente serviço de entrega.\nGarantia: 1 ano contra defeitos de fabricação.\nPilar para caixa d’água: aguarde o prazo mínimo de 5 dias antes de instalar ou colocar a caixa d’água.'+(sale.notes?'\nObservações do pedido: '+text(sale.notes):'')
                 ]]);
+                if(y>253){doc.addPage();y=24;}
+                const signY=Math.max(y+12,265);
+                doc.setDrawColor(210,218,226);doc.setLineWidth(0.3);doc.line(25,signY,92,signY);doc.line(118,signY,185,signY);
+                doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...gray);
+                doc.text('RESPONSÁVEL PELA EMPRESA',58.5,signY+4,{align:'center'});doc.text('ASSINATURA DO CLIENTE',151.5,signY+4,{align:'center'});
                 const pages=doc.getNumberOfPages();
                 for(let p=1;p<=pages;p++){
                     doc.setPage(p);doc.setDrawColor(210,218,226);doc.line(14,280,196,280);doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...gray);
