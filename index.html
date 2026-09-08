@@ -5219,19 +5219,19 @@
                         ${pendingSales.length > 0 ? pendingSales.slice().reverse().map(s => {
                             const isDelayed = s.deliveryDate && new Date(s.deliveryDate) < new Date(new Date().setHours(0,0,0,0));
                             return `
-                                <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden flex flex-col hover:border-primary-500/50 transition-all group">
-                                    <div class="p-5 border-b border-slate-50 dark:border-slate-700 flex justify-between items-start">
-                                        <div>
+                                <details class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden self-start hover:border-primary-500/50 transition-all group">
+                                    <summary class="p-4 flex justify-between gap-3 items-start cursor-pointer list-none [&::-webkit-details-marker]:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" aria-label="Ver detalhes do pedido ${Number(s.id)}">
+                                        <div class="min-w-0 flex-1">
                                             <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Pedido #${s.id}</p>
-                                            <h5 class="font-black text-slate-900 dark:text-white uppercase truncate max-w-[150px] leading-tight">${escapeHtml(s.clientName)}</h5>
+                                            <h5 class="font-bold text-slate-900 dark:text-white break-words leading-snug">${escapeHtml(s.clientName)}</h5>
                                         </div>
-                                        <div class="text-right">
+                                        <div class="text-right shrink-0">
                                             <p class="text-sm font-black text-primary-600">${formatCurrency(s.total)}</p>
                                             <p class="text-[9px] font-bold text-slate-400 uppercase">${formatDate(s.date)}</p>
                                         </div>
-                                    </div>
+                                    </summary>
 
-                                    <div class="p-5 flex-1 space-y-4">
+                                    <div class="p-5 border-t border-slate-100 dark:border-slate-700 space-y-4">
                                         <div class="flex items-center justify-between">
                                             <div class="flex items-center gap-2">
                                                 <div class="w-8 h-8 rounded-xl bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center">
@@ -5270,7 +5270,7 @@
                                             <i data-lucide="x-circle" class="w-4 h-4"></i> Cancelar
                                         </button>
                                     </div>
-                                </div>
+                                </details>
                             `;
                         }).join('') : `
                             <div class="col-span-full py-20 bg-white dark:bg-slate-800 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400">
