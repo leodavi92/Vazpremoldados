@@ -6755,39 +6755,19 @@
                 const grayText = [100, 116, 139]; // Slate-500
                 const lightGray = [241, 245, 249]; // Slate-100
 
-                // 1. Cabeçalho Minimalista
-                doc.setFontSize(22);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text(config.companyName.toUpperCase(), 15, 25);
-                
-                doc.setFontSize(10);
-                doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-                doc.setFont(undefined, 'normal');
-                doc.text(`CNPJ: ${config.cnpj}`, 15, 32);
-                doc.text(`${escapeHtml(config.address)}`, 15, 37);
-                doc.text(`TEL: ${escapeHtml(config.phone)}`, 15, 42);
-
-                // Título (Canto Direito)
-                doc.setFontSize(26);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(lightGray[0], lightGray[1], lightGray[2]);
-                doc.text('ORÇAMENTO', 195, 25, { align: 'right' });
-                
-                doc.setFontSize(12);
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text(`#${quote.id}`, 195, 32, { align: 'right' });
-                doc.setFontSize(9);
-                doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-                doc.text(`Emissão: ${formatDate(quote.date)}`, 195, 38, { align: 'right' });
-
-                // Linha Divisória
-                doc.setDrawColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.setLineWidth(0.8);
-                doc.line(15, 48, 195, 48);
-
-                // 2. Seção do Cliente
-                const clientY = 60;
+                // Separate bounded columns prevent long company details crossing the date.
+                doc.setFont('helvetica','bold');doc.setFontSize(18);doc.setTextColor(...accentColor);
+                const companyLines=doc.splitTextToSize(String(config.companyName||'Empresa').toUpperCase(),110);
+                doc.text(companyLines,15,25);
+                doc.setFontSize(20);doc.setTextColor(...lightGray);doc.text('ORÇAMENTO',195,25,{align:'right'});
+                doc.setFontSize(10);doc.setTextColor(...accentColor);doc.text('#'+quote.id,195,33,{align:'right'});
+                doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(...grayText);doc.text('Emissão: '+formatDate(quote.date),195,39,{align:'right'});
+                const detailsY=28+companyLines.length*7;
+                const details=doc.splitTextToSize('CNPJ: '+String(config.cnpj||'Não informado')+'\n'+String(config.address||'')+'\nTEL: '+String(config.phone||'Não informado'),110);
+                doc.text(details,15,detailsY);
+                const dividerY=Math.max(48,detailsY+details.length*4+4);
+                doc.setDrawColor(...accentColor);doc.setLineWidth(0.8);doc.line(15,dividerY,195,dividerY);
+                const clientY=dividerY+10;
                 doc.setFontSize(9);
                 doc.setFont(undefined, 'bold');
                 doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
@@ -6795,12 +6775,14 @@
                 
                 doc.setFontSize(10);
                 doc.setTextColor(darkText[0], darkText[1], darkText[2]);
-                doc.text(quote.clientName.toUpperCase(), 15, clientY + 7);
+                const clientLines=doc.splitTextToSize(String(quote.clientName||'Consumidor Final').toUpperCase(),180);
+                doc.text(clientLines,15,clientY+7);
+                const validityY=clientY+8+clientLines.length*5;
                 
                 doc.setFontSize(8);
                 doc.setTextColor(grayText[0], grayText[1], grayText[2]);
                 doc.setFont(undefined, 'normal');
-                doc.text(`Validade da Proposta: 7 dias corridos`, 15, clientY + 13);
+                doc.text(`Validade da Proposta: 7 dias corridos`, 15, validityY);
 
                 // 3. Tabela de Itens (Estilo Excel Moderno)
                 const tableData = quote.items.map((item, index) => {
@@ -6818,7 +6800,7 @@
                 });
 
                 doc.autoTable({
-                    startY: clientY + 25,
+                    startY: validityY + 8,
                     head: [['#', 'DESCRIÇÃO DOS PRODUTOS / SERVIÇOS', 'QTD', 'VALOR UNIT.', 'TOTAL']],
                     body: tableData,
                     theme: 'striped',
@@ -6848,33 +6830,16 @@
                     alternateRowStyles: {
                         fillColor: [250, 251, 252]
                     },
-                    margin: { left: 15, right: 15 }
+                    margin: { top: 15, bottom: 23, left: 15, right: 15 }, rowPageBreak: 'avoid'
                 });
 
-                // 4. Totais
-                const finalY = doc.lastAutoTable.finalY + 10;
-                const summaryX = 135;
-                
-                doc.setDrawColor(241, 245, 249);
-                doc.setFillColor(255, 255, 255);
-                doc.rect(summaryX, finalY - 5, 60, 15);
-                
-                doc.setFontSize(11);
-                doc.setFont(undefined, 'bold');
-                doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
-                doc.text('TOTAL ESTIMADO:', summaryX + 5, finalY + 5);
-                doc.text(formatCurrency(quote.total), 190, finalY + 5, { align: 'right' });
-
-                // 5. Rodapé
-                doc.setFontSize(8);
-                doc.setTextColor(grayText[0], grayText[1], grayText[2]);
-                doc.setFont(undefined, 'normal');
-                const obs = 'Obs: Este orçamento não garante reserva de estoque. Sujeito a alteração de preços sem aviso prévio.';
-                doc.text(obs.toUpperCase(), 105, 275, { align: 'center' });
-                
-                doc.setFontSize(7);
-                doc.setTextColor(lightGray[0], lightGray[1], lightGray[2]);
-                doc.text('Fábrica de Pré-moldados - Tecnologia e Qualidade em Concreto.', 105, 285, { align: 'center' });
+                doc.autoTable({startY:doc.lastAutoTable.finalY+7,head:[['TOTAL ESTIMADO','VALOR']],body:[['Total dos produtos / serviços',formatCurrency(quote.total)]],theme:'grid',margin:{top:15,bottom:23,left:95,right:15},styles:{fontSize:10,cellPadding:3,overflow:'linebreak'},headStyles:{fillColor:[241,245,249],textColor:accentColor},columnStyles:{0:{cellWidth:60},1:{cellWidth:40,halign:'right',fontStyle:'bold'}},rowPageBreak:'avoid'});
+                const pages=doc.getNumberOfPages();
+                for(let page=1;page<=pages;page++){
+                    doc.setPage(page);doc.setFont('helvetica','normal');doc.setFontSize(7);doc.setTextColor(...grayText);
+                    const obs=doc.splitTextToSize('Este orçamento não garante reserva de estoque. Sujeito a alteração de preços sem aviso prévio.',180);
+                    doc.text(obs,15,278);doc.text('Orçamento '+quote.id+' · Página '+page+'/'+pages,195,289,{align:'right'});
+                }
 
                 doc.save(`ORCAMENTO_${quote.id}_${quote.clientName.replace(/\s+/g, '_')}.pdf`);
             } catch (err) {
