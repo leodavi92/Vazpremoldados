@@ -1489,6 +1489,13 @@
             // if (e.target === modalBackdrop) closeModal(); // Comentado para evitar fechar sem querer
         };
 
+        function productionNeeds() {
+            return (appState.inventory || []).map(product=>{
+                const summary=stockSummary(product);
+                return {id:product.id,name:product.name,needed:summary.reserved,stock:summary.available,toProduce:summary.toProduce};
+            }).filter(item=>item.needed>0 && item.toProduce>0);
+        }
+
         function renderProducao() {
             // Cálculo de Produção (Sincronizado com Ponto de Equilíbrio)
             const { resetDateStr, endDateStr, daysElapsed, daysInMonth } = getBreakEvenConfig();
@@ -1504,40 +1511,8 @@
             
             const totalMonthly = monthlyProduction.reduce((acc, p) => acc + (p.qty || 0), 0);
 
-            // Cálculo de Necessidade de Produção (PCP)
-            const pcpNeeds = {};
-            (appState.sales || []).filter(s => s.status !== 'cancelled' && saleDeliveryState(s) !== 'delivered').forEach(sale => {
-                (sale.items || []).forEach(item => {
-                    if (!item.productId) return;
-                    if (!pcpNeeds[item.productId]) {
-                        pcpNeeds[item.productId] = {
-                            name: item.name || 'Produto',
-                            needed: 0,
-                            stock: 0
-                        };
-                    }
-                    pcpNeeds[item.productId].needed += (item.isMeter ? (item.units || 0) : (item.qty || 0));
-                });
-            });
-
-            // Cruzar com estoque atual
-            const pcpAlerts = [];
-            Object.keys(pcpNeeds).forEach(id => {
-                const product = (appState.inventory || []).find(p => p.id == id);
-                if (product) {
-                    pcpNeeds[id].stock = product.stock || 0;
-                    const short = pcpNeeds[id].needed - (product.stock || 0);
-                    if (short > 0) {
-                        pcpAlerts.push({
-                            id: id,
-                            name: pcpNeeds[id].name,
-                            needed: pcpNeeds[id].needed,
-                            stock: product.stock || 0,
-                            toProduce: short
-                        });
-                    }
-                }
-            });
+            // Stock already has pending orders deducted; only negative stock is uncovered demand.
+            const pcpAlerts = productionNeeds();
 
             let html = `
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
@@ -1566,7 +1541,7 @@
                                     </div>
                                     <div class="flex justify-between text-[10px] mb-4">
                                         <span class="text-slate-500 uppercase font-bold">Pedidos: <b class="text-slate-900 dark:text-white">${alert.needed}</b></span>
-                                        <span class="text-slate-500 uppercase font-bold">Estoque: <b class="text-slate-900 dark:text-white">${alert.stock}</b></span>
+                                        <span class="text-slate-500 uppercase font-bold">Disponível: <b class="text-slate-900 dark:text-white">${alert.stock}</b></span>
                                     </div>
                                     <button onclick="openProductionModal(${alert.id}, ${alert.toProduce})" class="w-full py-3 bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-black rounded-xl transition-all flex items-center justify-center gap-2 uppercase tracking-widest active:scale-95">
                                         PRODUZIR ${alert.toProduce} AGORA
