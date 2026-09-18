@@ -5177,87 +5177,30 @@
             lucide.createIcons();
         }
 
+        function deliveryContact(sale) {
+            const client=sale.deliveryContact || (appState.clients||[]).find(c=>c.id===sale.clientId) || {};
+            return {name:client.name||sale.clientName||'',phone:client.phone||'',taxId:client.taxId||'',address:client.address||[client.street,client.number,client.block,client.neighborhood,client.city,client.state].filter(Boolean).join(', '),reference:client.reference||''};
+        }
+        function deliveryDayLabel(date) {
+            return date ? new Date(date+'T12:00:00').toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'2-digit'}) : 'Sem agendamento';
+        }
+        function confirmOrderDelivery(id) {
+            const sale=appState.sales.find(s=>s.id===id);
+            if(!sale || sale.status==='cancelled' || saleDeliveryState(sale)==='delivered')return;
+            if(!confirm('Confirmar que os produtos foram entregues? Isso não registra pagamento.'))return;
+            sale.deliveryStatus='delivered';sale.deliveredAt=localDate();addAudit('delivered',id,{});saveData();renderVendasEntregas();
+        }
         function renderVendasEntregas() {
-            const pendingSales = appState.sales.filter(s => s.status !== 'cancelled' && (s.status === 'pending' || saleDeliveryState(s) !== 'delivered'));
-            
-            let html = `
-                <div class="animate-fade-in">
-                    <div class="mb-6">
-                        <h4 class="font-black text-slate-900 dark:text-white flex items-center gap-2 uppercase tracking-tighter text-lg">
-                            <i data-lucide="truck" class="w-6 h-6 text-primary-600"></i>
-                            Logística de Entregas
-                        </h4>
-                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">${pendingSales.length} pedidos aguardando entrega</p>
-                    </div>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        ${pendingSales.length > 0 ? pendingSales.slice().reverse().map(s => {
-                            const isDelayed = s.deliveryDate && new Date(s.deliveryDate) < new Date(new Date().setHours(0,0,0,0));
-                            return `
-                                <details class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden self-start hover:border-primary-500/50 transition-all group">
-                                    <summary class="p-4 flex justify-between gap-3 items-start cursor-pointer list-none [&::-webkit-details-marker]:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500" aria-label="Ver detalhes do pedido ${Number(s.id)}">
-                                        <div class="min-w-0 flex-1">
-                                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Pedido #${s.id}</p>
-                                            <h5 class="font-bold text-slate-900 dark:text-white break-words leading-snug">${escapeHtml(s.clientName)}</h5>
-                                        </div>
-                                        <div class="text-right shrink-0">
-                                            <p class="text-sm font-black text-primary-600">${formatCurrency(s.total)}</p>
-                                            <p class="text-[9px] font-bold text-slate-400 uppercase">${formatDate(s.date)}</p>
-                                        </div>
-                                    </summary>
-
-                                    <div class="p-5 border-t border-slate-100 dark:border-slate-700 space-y-4">
-                                        <div class="flex items-center justify-between">
-                                            <div class="flex items-center gap-2">
-                                                <div class="w-8 h-8 rounded-xl bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center">
-                                                    <i data-lucide="calendar" class="w-4 h-4 text-orange-600"></i>
-                                                </div>
-                                                <div>
-                                                    <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Previsão Entrega</p>
-                                                    <p class="text-[10px] font-black ${isDelayed ? 'text-red-600 animate-pulse' : 'text-slate-700 dark:text-slate-300'} uppercase">
-                                                        ${s.deliveryDate ? formatDate(s.deliveryDate) : 'Não definida'}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <div class="text-right">
-                                                <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest">Itens</p>
-                                                <p class="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase">${s.items?.length || 0} produtos</p>
-                                            </div>
-                                        </div>
-
-                                        <div class="bg-slate-50 dark:bg-slate-700/30 rounded-2xl p-3">
-                                            <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Forma de Pagamento</p>
-                                            <p class="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase truncate">
-                                                ${s.payments && s.payments.length > 0 
-                                                    ? s.payments.map(p => `${p.method}`).join(' + ')
-                                                    : s.paymentMethod}
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    <div class="p-4 bg-slate-50 dark:bg-slate-700/50 border-t border-slate-100 dark:border-slate-700 grid grid-cols-2 gap-3">
-                                        <button onclick="reopenDeliveryMessage(${Number(s.id)})" class="col-span-2 py-3 rounded-xl border border-primary-200 text-primary-600 dark:text-primary-400 font-bold text-sm">Ver agendamento / enviar mensagem</button>
-                                        <button onclick="openSaleManagement(${Number(s.id)})" class="col-span-2 p-3 rounded-xl bg-primary-600 text-white font-bold">Pagamento e entrega · falta ${formatCurrency(saleBalance(s))}</button>
-                                        <button onclick="finalizePendingSale(${s.id})" class="py-3 bg-green-600 text-white font-black rounded-2xl hover:brightness-95 transition-all active:scale-95 uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-green-600/20">
-                                            <i data-lucide="check-circle" class="w-4 h-4"></i> Confirmar
-                                        </button>
-                                        <button onclick="cancelPendingSale(${s.id})" class="py-3 bg-white dark:bg-slate-800 border border-red-100 dark:border-red-900/30 text-red-600 font-black rounded-2xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-all active:scale-95 uppercase text-[10px] tracking-widest flex items-center justify-center gap-2">
-                                            <i data-lucide="x-circle" class="w-4 h-4"></i> Cancelar
-                                        </button>
-                                    </div>
-                                </details>
-                            `;
-                        }).join('') : `
-                            <div class="col-span-full py-20 bg-white dark:bg-slate-800 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center text-slate-400">
-                                <i data-lucide="truck" class="w-12 h-12 mb-4 opacity-20"></i>
-                                <p class="font-black uppercase text-xs tracking-widest">Nenhuma entrega pendente no momento</p>
-                            </div>
-                        `}
-                    </div>
-                </div>
-            `;
-            document.getElementById('vendas-content').innerHTML = html;
-            lucide.createIcons();
+            const pending=appState.sales.filter(s=>s.status!=='cancelled' && saleDeliveryState(s)!=='delivered').slice().sort((a,b)=>(a.deliveryDate||'9999').localeCompare(b.deliveryDate||'9999')||(a.deliveryTime||'99').localeCompare(b.deliveryTime||'99')||b.id-a.id);
+            let day=null;
+            const cards=pending.map(s=>{
+                const contact=deliveryContact(s),date=s.deliveryDate||'',late=date && date<localDate();
+                const heading=day!==date ? '<h4 class="col-span-full font-bold text-lg dark:text-white mt-3">'+escapeHtml(deliveryDayLabel(date))+(late?' · Atrasada':'')+'</h4>' : '';day=date;
+                const products=(s.items||[]).map(i=>'<p>'+escapeHtml(i.isMeter?(i.units||1)+' peça(s) de '+i.lengthPerUnit+' m':i.qty+' un.')+' · '+escapeHtml(i.name)+'</p>').join('');
+                let phone=String(contact.phone).replace(/\D/g,'');if(phone.length===10||phone.length===11)phone='55'+phone;
+                return heading+`<details class="self-start bg-white dark:bg-slate-800 dark:text-white border rounded-2xl overflow-hidden"><summary class="p-4 cursor-pointer list-none [&::-webkit-details-marker]:hidden"><p class="text-xs text-slate-500">Pedido #${Number(s.id)} · ${escapeHtml(s.deliveryTime||'Horário a combinar')}</p><h5 class="font-bold text-lg break-words">${escapeHtml(s.clientName)}</h5><div class="text-sm my-2 space-y-1">${products}</div><div class="flex justify-between gap-2 text-sm font-semibold"><span>${formatCurrency(s.total)}</span><span>${date?formatDate(date):'Sem data'}</span></div><p class="text-xs text-primary-600 mt-2">Toque para ver endereço e ações</p></summary><div class="border-t p-4 space-y-3"><div><b>Endereço de entrega</b><p class="break-words">${escapeHtml(contact.address||'Endereço não cadastrado')}</p><p>${escapeHtml(contact.reference)}</p>${!s.deliveryContact?'<p class="text-xs text-slate-500">Pedido antigo: endereço do cadastro atual do cliente.</p>':''}<p>${escapeHtml(contact.phone)}</p></div><div class="flex flex-wrap gap-3">${contact.address?`<a class="text-primary-600 underline" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(contact.address)}">Abrir no mapa</a>`:''}${phone?`<a class="text-green-600 underline" target="_blank" rel="noopener noreferrer" href="https://wa.me/${phone}">WhatsApp do cliente</a>`:''}</div><p>Recebido: ${formatCurrency(saleReceived(s))}<br>Falta receber: ${formatCurrency(saleBalance(s))}</p><button onclick="openSaleManagement(${Number(s.id)})" class="w-full p-3 rounded-xl bg-primary-600 text-white">Pagamento / desconto</button><button onclick="confirmOrderDelivery(${Number(s.id)})" class="w-full p-3 rounded-xl bg-green-600 text-white">Confirmar entrega</button><button onclick="openReschedule(${Number(s.id)})" class="w-full p-3 rounded-xl border">Reagendar entrega</button><button onclick="reopenDeliveryMessage(${Number(s.id)})" class="w-full p-3 rounded-xl border">Ver agendamento / enviar mensagem</button><button onclick="openCancelSale(${Number(s.id)})" class="w-full p-3 rounded-xl border text-red-600">Cancelar pedido</button></div></details>`;
+            }).join('');
+            document.getElementById('vendas-content').innerHTML='<h3 class="text-xl font-bold dark:text-white">Entregas</h3><p class="text-sm text-slate-500">'+pending.length+' pedidos aguardando entrega</p><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">'+(cards||'<p class="p-5 dark:text-white">Nenhuma entrega pendente.</p>')+'</div>';lucide.createIcons();
         }
 
         function filterSalesHistory() {
@@ -6345,13 +6288,43 @@
             sale.cancelledAt = new Date().toISOString(); sale.cancellationReason = reason.trim(); sale.stockReturned = returnStock;
             addAudit('cancel', saleId, { original, amount, returnStock, reason:reason.trim() });
         }
+        function applyOrderDiscount(id,amount,reason) {
+            const sale=appState.sales.find(s=>s.id===id);
+            if(!sale || sale.status==='cancelled')throw new Error('Pedido indisponível.');
+            const cents=Math.round(amount*100),total=Math.round(sale.total*100),received=Math.round(saleReceived(sale)*100);
+            if(!Number.isFinite(amount)||cents<=0||cents>total)throw new Error('Informe um desconto válido.');
+            if(total-cents<received)throw new Error('O total não pode ficar abaixo do valor recebido. É necessário tratar a devolução primeiro.');
+            if(!String(reason||'').trim())throw new Error('Informe o motivo do desconto.');
+            const previousTotal=sale.total,previousDiscount=sale.discount||0,delivery=saleDeliveryState(sale);
+            sale.originalTotal=sale.originalTotal??Math.round((sale.total+previousDiscount)*100)/100;
+            sale.total=(total-cents)/100;sale.discount=Math.round(previousDiscount*100+cents)/100;
+            sale.deliveryStatus=delivery;
+            if(!sale.paymentPlan)sale.paymentPlan=(sale.payments||[]).map(p=>({...p}));
+            // Outdated planned amounts must not be shown as actual payments.
+            sale.payments=appState.transactions.filter(t=>t.saleId===id && t.type==='entrada').map(t=>({method:t.paymentMethod,amount:t.amount,installments:t.installments||1}));
+            sale.paymentStatus=total-cents===received?'paid':received>0?'partial':'unpaid';
+            if(sale.paymentStatus==='paid'){sale.orderDate=sale.orderDate||sale.date;sale.date=localDate();sale.status='completed';}
+            addAudit('discount',id,{previousTotal,previousDiscount,amount:cents/100,total:sale.total,reason:reason.trim()});
+        }
+        function openOrderDiscount(id) {
+            const sale=appState.sales.find(s=>s.id===id);if(!sale||sale.status==='cancelled')return;
+            const total=sale.total;
+            openModal(`<div class="p-5 space-y-3 dark:text-white"><h3 class="text-lg font-bold">Desconto no pedido #${Number(id)}</h3><p>Total atual: ${formatCurrency(total)}<br>Descontos já concedidos: ${formatCurrency(sale.discount||0)}<br>Recebido: ${formatCurrency(saleReceived(sale))}</p><label class="block">Novo desconto (R$)<input id="order-discount-amount" type="number" min="0.01" max="${saleBalance(sale)}" step="0.01" class="w-full p-3 border rounded-xl dark:bg-slate-700"></label><label class="block">Motivo<input id="order-discount-reason" maxlength="200" class="w-full p-3 border rounded-xl dark:bg-slate-700"></label><p id="order-discount-preview"></p><p id="order-discount-error" role="alert" class="text-red-600"></p><button id="order-discount-save" class="w-full p-3 rounded-xl bg-primary-600 text-white">Aplicar desconto</button><button onclick="openSaleManagement(${Number(id)})" class="w-full p-3 border rounded-xl">Voltar</button></div>`);
+            document.getElementById('order-discount-amount').oninput=e=>{const value=Number(e.target.value);document.getElementById('order-discount-preview').textContent=Number.isFinite(value)?'Novo total: '+formatCurrency(total-value):'';};
+            document.getElementById('order-discount-save').onclick=async()=>{try{
+                if(sale.total!==total)throw new Error('O pedido mudou. Abra novamente para conferir.');
+                applyOrderDiscount(id,Number(document.getElementById('order-discount-amount').value),document.getElementById('order-discount-reason').value);
+                document.getElementById('order-discount-save').disabled=true;await saveData();openSaleManagement(id);showToast('Desconto registrado.');
+            }catch(e){document.getElementById('order-discount-error').textContent=e.message;}};
+        }
+
         function openSaleManagement(saleId) {
             const sale = appState.sales.find(s => s.id === saleId);
             if (!sale) return;
             const balance = saleBalance(sale), cancelled = sale.status === 'cancelled';
             openModal(`<div class="p-5 space-y-4"><h3 class="text-lg font-bold dark:text-white">Pedido #${saleId} · ${escapeHtml(sale.clientName)}</h3>
-                <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-700 dark:text-white">Recebido: ${formatCurrency(saleReceived(sale))}<br>Falta receber: ${formatCurrency(cancelled ? 0 : balance)}<br>Entrega: ${cancelled ? 'Cancelada' : saleDeliveryState(sale) === 'delivered' ? 'Entregue' : 'Agendada'}</div>
-                ${!cancelled && balance > 0 ? `<label class="block dark:text-white">Receber agora<input id="sale-receive-amount" type="number" min="0.01" max="${balance}" step="0.01" value="${balance}" class="w-full p-3 rounded-xl border dark:bg-slate-700"></label><select id="sale-receive-method" class="w-full p-3 rounded-xl border dark:bg-slate-700 dark:text-white">${appState.config.paymentMethods.map(m => `<option>${escapeHtml(m)}</option>`).join('')}</select><label class="block text-sm dark:text-white">Parcelas (crédito)<select id="sale-receive-installments" class="w-full p-3 border rounded-xl dark:bg-slate-700">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1}x</option>`).join('')}</select></label><button id="sale-receive" class="w-full p-3 bg-green-600 text-white rounded-xl">Registrar recebimento</button>` : ''}
+                <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-700 dark:text-white">Total: ${formatCurrency(sale.total)}<br>Desconto: ${formatCurrency(sale.discount||0)}<br>Recebido: ${formatCurrency(saleReceived(sale))}<br>Falta receber: ${formatCurrency(cancelled ? 0 : balance)}<br>Entrega: ${cancelled ? 'Cancelada' : saleDeliveryState(sale) === 'delivered' ? 'Entregue' : 'Agendada'}</div>
+                ${!cancelled && balance > 0 ? `<button onclick="openOrderDiscount(${Number(saleId)})" class="w-full p-3 rounded-xl border dark:text-white">Aplicar desconto ao pedido</button><label class="block dark:text-white">Receber agora<input id="sale-receive-amount" type="number" min="0.01" max="${balance}" step="0.01" value="${balance}" class="w-full p-3 rounded-xl border dark:bg-slate-700"></label><select id="sale-receive-method" class="w-full p-3 rounded-xl border dark:bg-slate-700 dark:text-white">${appState.config.paymentMethods.map(m => `<option>${escapeHtml(m)}</option>`).join('')}</select><label class="block text-sm dark:text-white">Parcelas (crédito)<select id="sale-receive-installments" class="w-full p-3 border rounded-xl dark:bg-slate-700">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1}x</option>`).join('')}</select></label><button id="sale-receive" class="w-full p-3 bg-green-600 text-white rounded-xl">Registrar recebimento</button>` : ''}
                 ${!cancelled && saleDeliveryState(sale) !== 'delivered' ? '<button id="sale-delivered" class="w-full p-3 bg-primary-600 text-white rounded-xl">Marcar como entregue, sem receber</button>' : ''}
                 ${!cancelled ? `<button onclick="openReschedule(${Number(saleId)})" class="w-full p-3 rounded-xl border dark:text-white">Alterar data e horário</button><button onclick="openCancelSale(${Number(saleId)})" class="w-full p-3 text-red-600 rounded-xl border">Cancelar / estornar pedido</button>` : ''}
                 <button onclick="closeModal(); renderVendas()" class="w-full p-3 rounded-xl bg-slate-100 dark:bg-slate-700 dark:text-white">Voltar</button></div>`);
@@ -6414,6 +6387,7 @@
             const sale = {
                 id: saleId,
                 clientId: pdvClient ? pdvClient.id : 0,
+                deliveryContact: deliveryContact({clientId:pdvClient ? pdvClient.id : 0,clientName:pdvClient?.name||'Consumidor Final'}),
                 clientName: pdvClient ? pdvClient.name : 'Consumidor Final',
                 date: localDate(),
                 deliveryDate: status === 'pending' ? document.getElementById('pdv-delivery-date').value : null,
@@ -6585,7 +6559,7 @@
                 openModal('<div class="p-6"><h3 class="text-lg font-bold text-red-600">Não foi possível salvar</h3><p class="my-4 dark:text-white">Mantenha o app aberto. Exporte uma cópia dos dados antes de continuar.</p><button onclick="exportData()" class="p-3 rounded-xl bg-primary-600 text-white">Exportar backup</button><button onclick="closeModal()" class="p-3 ml-2">Voltar</button></div>');
                 return;
             }
-            const client = appState.clients.find(c => c.id === sale.clientId);
+            const client = deliveryContact(sale);
             let phone = String(client?.phone || '').replace(/\D/g, '');
             if (phone.length === 10 || phone.length === 11) phone = '55' + phone;
             const validPhone = /^55\d{10,11}$/.test(phone);
@@ -6645,7 +6619,7 @@
                 if (!window.jspdf) throw new Error('Biblioteca PDF indisponível. Tente novamente com internet.');
                 const doc = new window.jspdf.jsPDF();
                 if (typeof doc.autoTable !== 'function') throw new Error('Biblioteca de tabelas indisponível.');
-                const config=appState.config, client=appState.clients.find(c=>c.id===sale.clientId)||{};
+                const config=appState.config, client=deliveryContact(sale);
                 const text=v=>String(v??'').replace(/\u00a0/g,' ');
                 const money=v=>text(formatCurrency(v));
                 const receipts=appState.transactions.filter(t=>t.saleId===sale.id && (t.type==='entrada'||t.isSaleRefund));
@@ -8486,7 +8460,7 @@
         }
         function openAuditHistory() {
             const entries=(appState.auditLog || []).filter(e=>isInSelectedMonth(localDate(new Date(e.at)))).slice().reverse();
-            const labels={payment:'Recebimento',cancel:'Cancelamento / estorno',delivered:'Entrega confirmada',reschedule:'Reagendamento'};
+            const labels={discount:'Desconto no pedido',payment:'Recebimento',cancel:'Cancelamento / estorno',delivered:'Entrega confirmada',reschedule:'Reagendamento'};
             openModal('<div class="p-5 dark:text-white"><h3 class="text-lg font-bold mb-4">Alterações do mês</h3>'+historyMonthControl('openAuditHistory()')+entries.map(e=>'<div class="p-3 border-b"><b>'+escapeHtml(labels[e.action] || e.action)+'</b> · Pedido '+escapeHtml(e.saleId)+'<p class="text-xs">'+escapeHtml(new Date(e.at).toLocaleString('pt-BR'))+'</p><p class="text-sm break-words">'+escapeHtml(JSON.stringify(e.details))+'</p></div>').join('')+(!entries.length?'<p>Nenhuma alteração registrada nesta versão.</p>':'')+'<button onclick="closeModal()" class="w-full p-3 border rounded-xl mt-3">Voltar</button></div>');
         }
 
