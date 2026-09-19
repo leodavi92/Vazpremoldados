@@ -5143,7 +5143,7 @@
                             <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                                 <select id="history-status-filter" onchange="filterSalesHistory()" class="px-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-primary-500/20">
                                     <option value="all">Todos os Status</option>
-                                    <option value="completed">Concluídas</option>
+                                    <option value="pending">A receber</option><option value="completed">Concluídas</option>
                                     <option value="cancelled">Canceladas</option>
                                 </select>
                                 <div class="relative w-full sm:w-64">
@@ -5239,7 +5239,7 @@
             
             const filteredSales = appState.sales.filter(s => {
                 const matchesSearch = (s.clientName || '').toLowerCase().includes(query);
-                const matchesStatus = statusFilter === 'all' ? (s.status === 'completed' || s.status === 'cancelled') : s.status === statusFilter;
+                const matchesStatus = statusFilter === 'all' ? (s.status === 'completed' || s.status === 'cancelled' || s.status === 'pending') : s.status === statusFilter;
                 return matchesSearch && matchesStatus && isInSelectedMonth(s.orderDate || s.date);
             });
             
@@ -5248,7 +5248,7 @@
 
             container.innerHTML = filteredSales.slice().reverse().map(s => {
                 const isCancelled = s.status === 'cancelled';
-                const statusLabel = isCancelled ? 'Cancelada' : 'Concluída';
+                const statusLabel = isCancelled ? 'Cancelada' : s.status==='pending' ? 'A receber' : 'Concluída';
                 const statusColor = isCancelled ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600';
 
                 return `
@@ -6332,6 +6332,7 @@
             if(!sale.paymentPlan)sale.paymentPlan=(sale.payments||[]).map(p=>({...p}));
             // Outdated planned amounts must not be shown as actual payments.
             sale.payments=appState.transactions.filter(t=>t.saleId===id && t.type==='entrada').map(t=>({method:t.paymentMethod,amount:t.amount,installments:t.installments||1}));
+            sale.paymentMethod=sale.payments.length===1?sale.payments[0].method:sale.payments.length>1?'Múltiplos':sale.paymentMethod;
             sale.paymentStatus=total-cents===received?'paid':received>0?'partial':'unpaid';
             if(sale.paymentStatus==='paid'){sale.orderDate=sale.orderDate||sale.date;sale.date=localDate();sale.status='completed';}
             addAudit('discount',id,{previousTotal,previousDiscount,amount:cents/100,total:sale.total,reason:reason.trim()});
@@ -6348,18 +6349,37 @@
             }catch(e){document.getElementById('order-discount-error').textContent=e.message;}};
         }
 
+        function settleOrderPayment(id,discount,amount,method,installments,reason) {
+            const sale=appState.sales.find(s=>s.id===id);
+            if(!sale||sale.status==='cancelled')throw new Error('Pedido indisponível.');
+            const d=Math.round(discount*100),a=Math.round(amount*100),balance=Math.round(saleBalance(sale)*100);
+            if(!Number.isFinite(discount)||d<0||d>balance)throw new Error('Desconto maior que o saldo disponível.');
+            if(!Number.isFinite(amount)||a<0||a>balance-d||(!a&&!d))throw new Error('Confira o valor recebido e o desconto.');
+            if(d>0&&!String(reason||'').trim())throw new Error('Informe o motivo do desconto.');
+            if(a>0&&(!appState.config.paymentMethods.includes(method)||(method==='Cartão de Crédito'&&(!Number.isInteger(installments)||installments<1||installments>12))))throw new Error('Confira a forma de pagamento e as parcelas.');
+            if(d>0)applyOrderDiscount(id,d/100,reason);
+            if(a>0)registerSalePayment(id,a/100,method,method==='Cartão de Crédito'?installments:1,localDate());
+        }
+
         function openSaleManagement(saleId) {
             const sale = appState.sales.find(s => s.id === saleId);
             if (!sale) return;
             const balance = saleBalance(sale), cancelled = sale.status === 'cancelled';
             openModal(`<div class="p-5 space-y-4"><h3 class="text-lg font-bold dark:text-white">Pedido #${saleId} · ${escapeHtml(sale.clientName)}</h3>
                 <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-700 dark:text-white">Total: ${formatCurrency(sale.total)}<br>Desconto: ${formatCurrency(sale.discount||0)}<br>Recebido: ${formatCurrency(saleReceived(sale))}<br>Falta receber: ${formatCurrency(cancelled ? 0 : balance)}<br>Entrega: ${cancelled ? 'Cancelada' : saleDeliveryState(sale) === 'delivered' ? 'Entregue' : 'Agendada'}</div>
-                ${!cancelled && balance > 0 ? `<button onclick="openOrderDiscount(${Number(saleId)})" class="w-full p-3 rounded-xl border dark:text-white">Aplicar desconto ao pedido</button><label class="block dark:text-white">Receber agora<input id="sale-receive-amount" type="number" min="0.01" max="${balance}" step="0.01" value="${balance}" class="w-full p-3 rounded-xl border dark:bg-slate-700"></label><select id="sale-receive-method" class="w-full p-3 rounded-xl border dark:bg-slate-700 dark:text-white">${appState.config.paymentMethods.map(m => `<option>${escapeHtml(m)}</option>`).join('')}</select><label class="block text-sm dark:text-white">Parcelas (crédito)<select id="sale-receive-installments" class="w-full p-3 border rounded-xl dark:bg-slate-700">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1}x</option>`).join('')}</select></label><button id="sale-receive" class="w-full p-3 bg-green-600 text-white rounded-xl">Registrar recebimento</button>` : ''}
+                ${!cancelled && balance > 0 ? `<button onclick="openOrderDiscount(${Number(saleId)})" class="w-full p-3 rounded-xl border dark:text-white">Aplicar desconto ao pedido</button><label class="block dark:text-white">Desconto adicional (R$)<input id="sale-pay-discount" type="number" min="0" max="${balance}" step="0.01" value="0" class="w-full p-3 border rounded-xl dark:bg-slate-700"></label><input id="sale-pay-reason" placeholder="Motivo do desconto, se houver" class="w-full p-3 border rounded-xl dark:bg-slate-700"><p id="sale-pay-preview" class="text-sm font-bold dark:text-white"></p><label class="block dark:text-white">Receber agora<input id="sale-receive-amount" type="number" min="0" max="${balance}" step="0.01" value="${balance}" class="w-full p-3 rounded-xl border dark:bg-slate-700"></label><select id="sale-receive-method" class="w-full p-3 rounded-xl border dark:bg-slate-700 dark:text-white">${appState.config.paymentMethods.map(m => `<option>${escapeHtml(m)}</option>`).join('')}</select><label class="block text-sm dark:text-white">Parcelas (crédito)<select id="sale-receive-installments" class="w-full p-3 border rounded-xl dark:bg-slate-700">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1}x</option>`).join('')}</select></label><button id="sale-receive" class="w-full p-3 bg-green-600 text-white rounded-xl">Revisar pagamento</button>` : ''}
                 ${!cancelled && saleDeliveryState(sale) !== 'delivered' ? '<button id="sale-delivered" class="w-full p-3 bg-primary-600 text-white rounded-xl">Confirmar entrega / ajudante</button>' : ''}
                 ${!cancelled ? `<button onclick="openReschedule(${Number(saleId)})" class="w-full p-3 rounded-xl border dark:text-white">Alterar data e horário</button><button onclick="openCancelSale(${Number(saleId)})" class="w-full p-3 text-red-600 rounded-xl border">Cancelar / estornar pedido</button>` : ''}
                 <button onclick="closeModal(); renderVendas()" class="w-full p-3 rounded-xl bg-slate-100 dark:bg-slate-700 dark:text-white">Voltar</button></div>`);
             const receive = document.getElementById('sale-receive');
-            if (receive) receive.onclick = () => { try { registerSalePayment(saleId, Number(document.getElementById('sale-receive-amount').value), document.getElementById('sale-receive-method').value, Number(document.getElementById('sale-receive-installments').value), localDate()); saveData(); openSaleManagement(saleId); } catch(e) { showToast(e.message,'error'); } };
+            const discountField=document.getElementById('sale-pay-discount');
+            const preview=()=>{const d=Number(discountField.value)||0;document.getElementById('sale-pay-preview').textContent='Total com desconto: '+formatCurrency(sale.total-d)+' · Já recebido: '+formatCurrency(saleReceived(sale));};
+            if(discountField){discountField.oninput=()=>{document.getElementById('sale-receive-amount').value=Math.max(0,Math.round((balance-Number(discountField.value||0))*100)/100);preview();};preview();}
+            if (receive) receive.onclick = async () => { try {
+                const discount=Number(discountField.value),amount=Number(document.getElementById('sale-receive-amount').value),method=document.getElementById('sale-receive-method').value,installments=Number(document.getElementById('sale-receive-installments').value),reason=document.getElementById('sale-pay-reason').value;
+                if(!confirm('Conferir pedido #'+saleId+'\nDesconto adicional: '+formatCurrency(discount)+'\nTotal final: '+formatCurrency(sale.total-discount)+'\nRegistrar nova entrada: '+formatCurrency(amount)+(amount>0?' · '+method+(method==='Cartão de Crédito'?' '+installments+'x':''):' (somente ajustar desconto)')+'\nSaldo restante: '+formatCurrency(balance-discount-amount)))return;
+                settleOrderPayment(saleId,discount,amount,method,installments,reason);receive.disabled=true;await saveData();openSaleManagement(saleId);showToast('Pedido atualizado.');
+            } catch(e) { showToast(e.message,'error'); } };
             const delivered = document.getElementById('sale-delivered');
             if (delivered) delivered.onclick = () => confirmOrderDelivery(saleId);
         }
