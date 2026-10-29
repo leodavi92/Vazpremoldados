@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v16-material';
+const CACHE_NAME = 'app-fabrica-v17-visual';
 const ASSETS = [
   './',
   './index.html',
