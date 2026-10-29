@@ -3980,6 +3980,10 @@
                                 <label class="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Nome / Razão Social *</label>
                                 <input type="text" id="c-name" required value="${escapeHtml(client?.name || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
                             </div>
+                            <div class="md:col-span-2">
+                                <label for="c-responsible" class="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Responsável (opcional)</label>
+                                <input type="text" id="c-responsible" value="${escapeHtml(client?.responsible || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">
+                            </div>
                             <div>
                                 <label class="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">CPF / CNPJ (Opcional)</label>
                                 <input type="text" inputmode="numeric" id="c-tax" value="${escapeHtml(client?.taxId || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500">
@@ -4037,6 +4041,10 @@
                             <div class="md:col-span-2">
                                 <label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Ponto de Referência</label>
                                 <input type="text" id="c-ref" placeholder="Ex: Próximo ao mercado X" value="${escapeHtml(client?.reference || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 text-sm">
+                            </div>
+                            <div class="md:col-span-2">
+                                <label for="c-location" class="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Link da localização (opcional)</label>
+                                <input type="url" id="c-location" value="${escapeHtml(client?.location || '')}" class="w-full p-2.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg" placeholder="https://maps…">
                             </div>
                         </div>
                         <div class="sticky bottom-0 flex gap-3 py-4 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700">
@@ -4121,6 +4129,8 @@
                     city: city,
                     state: state,
                     reference: document.getElementById('c-ref').value,
+                    responsible: document.getElementById('c-responsible').value.trim(),
+                    location: document.getElementById('c-location').value.trim(),
                     address: fullAddr // Mantido para compatibilidade
                 };
                 if (client) {
@@ -4919,7 +4929,7 @@
             if (client.address && !client.street) address.unshift(['Endereço cadastrado', client.address]);
             const groups = [
                 ['Identificação', 'user-round', [['Tipo', client.type === 'PJ' ? 'Pessoa Jurídica' : 'Pessoa Física'], ['CPF / CNPJ', client.taxId]]],
-                ['Contato', 'phone', [['Telefone', client.phone], ['E-mail', client.email]]],
+                ['Contato', 'phone', [['Responsável', client.responsible], ['Telefone', client.phone], ['E-mail', client.email], ['Localização', client.location]]],
                 ['Endereço de entrega', 'map-pin', address]
             ];
             openModal(`
@@ -9603,5 +9613,7 @@
         5. Você pode exportar um backup em JSON nas Configurações.
         6. Para imprimir recibos, clique em "Finalizar Venda" no PDV e confirme a geração do PDF.
     -->
+    <script src="assistant-config.js"></script>
+    <script type="module" src="assistant.mjs"></script>
 </body>
 </html>

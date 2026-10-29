@@ -1,8 +1,11 @@
-const CACHE_NAME = 'app-fabrica-v5';
+const CACHE_NAME = 'app-fabrica-v6-assistente';
 const ASSETS = [
   './',
   './index.html',
   './app-safety.js',
+  './assistant-config.js',
+  './assistant.mjs',
+  './assistant-core.mjs',
   './manifest.webmanifest',
   './app-icon.svg'
 ];
@@ -31,7 +34,7 @@ self.addEventListener('fetch', (event) => {
   const isNavigation = event.request.mode === 'navigate';
   const isIndex = isSameOrigin && (url.pathname.endsWith('/') || url.pathname.endsWith('/index.html'));
 
-  if (isNavigation || isIndex || (isSameOrigin && url.pathname.endsWith('.js'))) {
+  if (isNavigation || isIndex || (isSameOrigin && (url.pathname.endsWith('.js') || url.pathname.endsWith('.mjs')))) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
