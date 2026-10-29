@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v14-economia';
+const CACHE_NAME = 'app-fabrica-v15-apagar-conversas';
 const ASSETS = [
   './',
   './index.html',
