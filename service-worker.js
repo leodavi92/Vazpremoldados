@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v6-assistente';
+const CACHE_NAME = 'app-fabrica-v7-duas-telas';
 const ASSETS = [
   './',
   './index.html',
