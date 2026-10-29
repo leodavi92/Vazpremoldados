@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 const nodes={};
 function node(id){return nodes[id]||= {hidden:true,style:{},attributes:{},classList:{toggle(name,value){this[name]=value}},setAttribute(k,v){this.attributes[k]=v},textContent:'',innerHTML:'',scrollTop:0,scrollHeight:1};}
 const ctx={document:{getElementById:node},currentUser:{uid:'person-one'},currentEnv:'prod',localStorage:{getItem:()=>JSON.stringify([{role:'assistant',content:'Histórico preservado'}]),setItem(){}},console};
-const source=fs.readFileSync(new URL('./assistant.mjs',import.meta.url),'utf8').replace(/^import[^\n]+\n/,'');
+const source=fs.readFileSync(new URL('./assistant.mjs',import.meta.url),'utf8').replace(/^import[^\n]+\n/gm,'');
 vm.createContext(ctx);vm.runInContext(source.slice(0,source.indexOf("if(document.readyState==='complete')")),ctx);
 vm.runInContext('root={getElementById:id=>document.getElementById(id)};panel=document.getElementById("panel");button=document.getElementById("assistant-mode");refresh()',ctx);
 assert.equal(nodes.panel.hidden,false);assert.equal(nodes['screen-switcher'].hidden,false);assert.equal(nodes['main-app'].inert,true);assert.equal(nodes['assistant-mode'].attributes['aria-pressed'],'true');

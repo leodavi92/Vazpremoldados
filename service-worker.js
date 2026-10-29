@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v8-contexto';
+const CACHE_NAME = 'app-fabrica-v9-operacoes';
 const ASSETS = [
   './',
   './index.html',
@@ -6,6 +6,7 @@ const ASSETS = [
   './assistant-config.js',
   './assistant.mjs',
   './assistant-core.mjs',
+  './assistant-operations.mjs',
   './manifest.webmanifest',
   './app-icon.svg'
 ];

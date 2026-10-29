@@ -1,4 +1,5 @@
 import {queryState,summary,localDay,conversationControl,conversationHistory,recoveryMessage,validatePlan} from './assistant-core.mjs';
+import {operationalReply} from './assistant-operations.mjs';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let panel,root,button,messages=[],busy=false,scope='',requestController,mode='assistant';
 function user(){return typeof currentUser!=='undefined'?currentUser:null}
@@ -7,7 +8,8 @@ function load(){try{messages=JSON.parse(localStorage.getItem(key())||'[]');if(!A
 function persist(){try{localStorage.setItem(key(),JSON.stringify(messages.slice(-80)))}catch{notice('Não consegui guardar o histórico da conversa neste aparelho.')}}
 function notice(message){if(root)root.getElementById('notice').textContent=message}
 function render(){
- const list=root.getElementById('messages');list.innerHTML=messages.length?messages.map((m,i)=>`<div class="bubble ${m.role==='user'?'mine':'theirs'}"><small>${m.role==='user'?'Você':'Assistente VAZ'}</small><div>${esc(m.content)}</div>${m.plan&&!m.used&&i===messages.length-1?'<div class="actions"><button id="prepare">Conferir no aplicativo</button><button id="cancel">Cancelar</button></div>':''}</div>`).join(''):'<div class="welcome"><h2>Como posso ajudar?</h2><p>Consulte os dados da VAZ, tire dúvidas do app ou cole a mensagem de um cliente.</p></div>';
+ const list=root.getElementById('messages');list.innerHTML=messages.length?messages.map((m,i)=>`<div class="bubble ${m.role==='user'?'mine':'theirs'}"><small>${m.role==='user'?'Você':'Assistente VAZ'}</small><div>${esc(m.content)}</div>${m.plan&&!m.used&&i===messages.length-1?'<div class="actions"><button id="prepare">Conferir no aplicativo</button><button id="cancel">Cancelar</button></div>':''}${m.decision&&!m.used&&i===messages.length-1?'<div class="actions">'+m.choices.map((c,n)=>'<button data-choice="'+n+'">'+esc(c.label)+'</button>').join('')+'</div>':''}</div>`).join(''):'<div class="welcome"><h2>Como posso ajudar?</h2><p>Consulte os dados da VAZ, tire dúvidas do app ou cole a mensagem de um cliente.</p></div>';
+ for(const choice of root.querySelectorAll?.('[data-choice]')||[]){choice.disabled=busy;choice.onclick=()=>{const selected=messages.at(-1)?.choices?.[Number(choice.dataset.choice)];if(selected){root.getElementById('message').value=selected.value;send()}}}
  list.scrollTop=list.scrollHeight;const send=root.getElementById('send');send.disabled=busy;send.textContent=busy?'Respondendo…':'Enviar';
  if(root.getElementById('prepare')){root.getElementById('prepare').disabled=busy;root.getElementById('prepare').onclick=prepare;root.getElementById('cancel').disabled=busy;root.getElementById('cancel').onclick=()=>{messages.at(-1).used=true;messages.push({role:'assistant',content:'Ficha cancelada. Nenhum registro foi salvo.',contextBoundary:true});persist();render()}}
 }
@@ -31,6 +33,9 @@ async function send(){
  const field=root.getElementById('message'),message=field.value.trim();if(!message)return;
  const control=conversationControl(message);
  if(control?.action==='answer'){messages.push({role:'user',content:message},{role:'assistant',content:control.content,contextBoundary:control.resetContext});field.value='';persist();notice('');render();return}
+ const previous=messages.at(-1);let pendingItem=null;for(let i=messages.length-1;i>=0;i--){if(messages[i].contextBoundary)break;if(messages[i].decision&&!messages[i].used){pendingItem=messages[i];break}}const pending=pendingItem?.decision||null;
+ const local=operationalReply(message,appState,{monthlyClosing:typeof computeMonthlyClosing==='function'?computeMonthlyClosing:undefined,balance:typeof saleBalance==='function'?saleBalance:undefined,deliveryState:typeof saleDeliveryState==='function'?saleDeliveryState:undefined},pending,Boolean(previous?.overview));
+ if(local){if(pendingItem&&(local.decision||local.action==='draft'))pendingItem.used=true;const reply={role:'assistant',content:local.content};if(local.action==='draft'){reply.plan=local;reply.createdAt=Date.now()}if(local.decision){reply.decision=local.decision;reply.choices=local.choices}if(local.overview)reply.overview=true;messages.push({role:'user',content:message},reply);messages=messages.slice(-80);field.value='';persist();notice('');render();return}
  const api=String(window.VAZ_ASSISTANT_API||'').replace(/\/$/,'');
  if(!/^https:\/\/[a-z0-9.-]+(?:\/[^?#]*)?$/i.test(api)){notice('A conexão online do assistente ainda não foi ativada. Seus dados continuam disponíveis nas telas do aplicativo.');return}
  const identity=scope,history=conversationHistory(messages);
@@ -60,7 +65,14 @@ function prepare(){
  if(Date.now()-item.createdAt>1800000){notice('A ficha expirou. Envie novamente para conferir os dados atuais.');return}
  const plan=item.plan,r=plan.record;
  try{
-  if(plan.kind==='clients'){
+  if(plan.kind==='production'||plan.kind==='stock'){
+   const product=appState.inventory.find(p=>String(p.id)===String(r.productId));if(!product)throw Error('Produto não encontrado no cadastro atual.');
+   if(!Number.isFinite(r.quantity)||r.quantity<=0)throw Error('Quantidade inválida.');
+   if(r.date!==localDay())throw Error('A data mudou. Envie a mensagem novamente para conferir.');
+   if(!document.getElementById('modal-backdrop')?.classList.contains('hidden')){notice('Conclua ou feche o formulário aberto antes de conferir esta ficha.');return}
+   if(plan.kind==='production'){if(product.type!=='final')throw Error('Esse item não é um produto acabado.');openProductionModal(product.id,r.quantity)}
+   else{if(r.type==='saida'&&r.quantity>Math.max(0,Number(product.stock)))throw Error('O saldo disponível mudou e não cobre essa saída.');openStockMovementModal();select('sm-prod',String(product.id));select('sm-type',r.type);set('sm-qty',r.quantity);const expense=document.getElementById('sm-gen-expense');if(expense)expense.checked=false}
+  }else if(plan.kind==='clients'){
    if(appState.clients.some(c=>String(c.name).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()===String(r.name).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()))throw Error('Já existe um cliente com esse nome. Confira em Clientes antes de criar outro.');
    if(!document.getElementById('modal-backdrop')?.classList.contains('hidden')){notice('Conclua ou feche o formulário aberto antes de conferir esta ficha.');return}
    openClientModal();set('c-name',r.name);set('c-phone',r.phone);set('c-responsible',r.responsible);set('c-street',r.address);set('c-ref',r.reference);set('c-location',r.location);if(/\b(ltda|construcoes|construções|s\/a)\b/i.test(r.name))select('c-type','PJ');
