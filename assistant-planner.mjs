@@ -26,8 +26,9 @@ export function advanceOperation(patch,state,previous=null){
  const lookup=(list,label,field,kind)=>{const target=f[field];const rows=target?list.filter(row=>String(row.id)===String(target)||clean(row.name||row.clientName).includes(clean(target))):list;return rows.length===1?rows[0]:ask(field,`Qual ${label}?`,rows.slice(0,10).map(row=>({label:kind==='sale'?`Pedido #${row.id} • ${row.clientName} • ${money(row.total)}`:row.name,value:kind==='sale'?String(row.id):row.name})))};
  let product,client,sale;
  if(['adjustStock','recordProduction','createSale'].includes(intent)){
-  let found=(state.inventory||[]).filter(p=>String(p.id)===String(f.productId));if(!found.length)found=f.product?findProducts(f.product,state.inventory||[]):[];
-  if(found.length!==1)return ask('product',`Qual produto/capacidade?${f.quantity?` Já tenho ${f.quantity} unidades.`:''}`,(found.length?found:state.inventory||[]).slice(0,10).map(p=>({label:p.name,value:p.name})));
+  const catalog=(state.inventory||[]).filter(p=>intent!=='recordProduction'||p.type==='final');
+  let found=catalog.filter(p=>String(p.id)===String(f.productId));if(!found.length)found=f.product?findProducts(f.product,catalog):[];
+  if(found.length!==1){delete f.productId;return ask('product',`Qual produto/capacidade?${f.quantity?` Já tenho ${f.quantity} unidades.`:''}`,(found.length?found:catalog).slice(0,10).map(p=>({label:p.name,value:p.name})));}
   product=found[0];f.productId=product.id;f.product=product.name;
   if(!Number.isFinite(f.quantity)||f.quantity<=0)return ask('quantity',`Quantas unidades de ${product.name}?`);
  }
@@ -94,6 +95,10 @@ export function answerOperation(operation,message,state){
   const fields={type:'entrada',origin:'adjustment',...(quantity?{quantity}:{})};
   if(candidates.length===1){fields.productId=candidates[0].id;fields.product=candidates[0].name}
   const result=advanceOperation({intent:'adjustStock',fields},state);if(candidates.length!==1&&result.operation?.waiting==='product'){result.content='Qual material você quer adicionar?'+(quantity?' Já tenho a quantidade: '+quantity+'.':'')+' A fabricação anterior não foi registrada.';const materials=(state.inventory||[]).filter(p=>p.type!=='final');result.choices=(candidates.length?candidates:materials).slice(0,10).map(p=>({label:p.name,value:p.name}))}return result;
+ }
+ if(['recordProduction','adjustStock'].includes(operation.intent)&&(operation.waiting!=='quantity'||!/^\d+(?:[.,]\d+)?$/.test(n))&&!/[?!]/.test(value)&&!/^\b(?:adicione|adiciona|coloque|fabrique|fabriquei|quanto|como|qual|quero|agora)\b/.test(n)){
+  const catalog=(state.inventory||[]).filter(p=>operation.intent!=='recordProduction'||p.type==='final');let products=findProducts(value,catalog);
+  if(products.length){const fields={...operation.fields,product:value};delete fields.productId;if(products.length===1){fields.product=products[0].name;fields.productId=products[0].id}return advanceOperation({intent:operation.intent,fields},state)}
  }
  if(!operation.waiting)return null;const field=operation.waiting;let parsed;
  if(['quantity','amount','total','received','installments','helperAmount'].includes(field)){
