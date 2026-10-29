@@ -25,7 +25,7 @@ export function factoryOverview(state,helpers={},month=localDay().slice(0,7),day
  return lines.join('\n');
 }
 const aliases={pilares:'pilar',pilare:'pilar',manilhas:'manilha',tampas:'tampa',caixas:'caixa',litros:'litro',aguas:'agua',blocos:'bloco',metros:'metro'};
-const ignored=new Set(['para','de','da','do','das','dos','d','agua','no','na','nos','nas','estoque','un','unidade','unidades','peca','pecas','ao','a','o','e','em','com']);
+const ignored=new Set(['para','de','da','do','das','dos','d','agua','no','na','nos','nas','estoque','un','unidade','unidades','peca','pecas','ao','a','o','e','em','com','hoje','agora']);
 function tokens(value){return clean(value).split(' ').map(v=>aliases[v]||v).filter(v=>v&&!ignored.has(v))}
 export function findProducts(description,inventory){
  const wanted=tokens(description);if(!wanted.length)return [];
@@ -47,6 +47,16 @@ function chooseOperation(pending,state){
  if(pending.mode==='stock'||pending.type==='saida'||product.type!=='final')return operationDraft(pending,'stock',state);
  return {action:'decision',content:`Encontrei ${product.name}. Para adicionar ${pending.quantity} ${product.unit||'un'}, qual foi a origem?\n\nFabricação: aumenta o produto e consome os materiais da receita.\nAjuste/entrada: corrige ou acrescenta o saldo sem registrar fabricação.\n\nNenhum registro foi salvo.`,decision:{...pending,stage:'origin'},choices:[{label:'Foi fabricação',value:'Foi fabricação'},{label:'É ajuste de estoque',value:'É ajuste de estoque'}]};
 }
+function productQuestion(pending,candidates){return {action:'decision',content:`Tenho a quantidade: ${pending.quantity} ${pending.quantity===1?'unidade':'unidades'}${pending.mode==='production'?' fabricadas':''}. ${candidates.length?'Qual produto/capacidade você quer registrar?':'Ainda não encontrei o produto. Qual é o nome ou a capacidade?'} Não precisa repetir a quantidade.`,decision:{...pending,stage:'product',candidates:candidates.map(p=>p.id)},choices:candidates.slice(0,8).map(p=>({label:p.name,value:p.name}))}}
+export function pendingOperation(messages,state){
+ for(let i=messages.length-1;i>=0;i--){const entry=messages[i];if(entry.contextBoundary)break;if(entry.role!=='user')continue;
+  if(!/\b(?:fabri|produz|lanc|adicion|coloc|acrescent|ajust|retir|baixa|perda)/.test(clean(entry.content)))continue;
+  const result=operationalReply(entry.content,state);
+  if(result?.decision)return result.decision;
+  if(result?.action==='draft'&&['production','stock'].includes(result.kind))return{stage:'product',quantity:result.record.quantity,type:result.record.type,mode:result.kind==='production'?'production':'stock',candidates:[result.record.productId]};
+ }
+ return null;
+}
 export function operationalReply(message,state,helpers={},pending=null,previousOverview=false){
  const value=clean(message);
  if(/\bbalanco\b|\bpanorama\b|\bresumo (?:da |de )?(?:fabrica|empresa|operacao)\b|como (?:esta|vai|anda).*(?:fabrica|empresa)/.test(value)||previousOverview&&/(?:o\s*que|oque|onde).*(?:precisa|ajuda|ajusta|melhora)/.test(value)){
@@ -59,19 +69,27 @@ export function operationalReply(message,state,helpers={},pending=null,previousO
   return {action:'answer',content:previousOverview&&/(?:o\s*que|oque|onde).*(?:precisa|ajuda|ajusta|melhora)/.test(value)?'Pontos de atenção'+report.split('Pontos de atenção')[1]:report,overview:true};
  }
  const isProduction=/\b(?:fabri(?:camos|quei|car|cando|cou)|produzimos|produzi|produzir|produzido|fabricacao|producao)\b/.test(value);
- const isStock=/\b(?:adicione|adiciona|adicionar|coloca|coloque|colocar|acrescente|acrescenta|acrescentar|ajuste|ajustar|retire|retira|retirar|baixa|perda)\b/.test(value)||/\b(?:entrada|saida)\b/.test(value)&&/\bestoque\b/.test(value);
+ const isStock=/\b(?:lancar|lanca|lance|lancamento|adicione|adiciona|adicionar|coloca|coloque|colocar|acrescente|acrescenta|acrescentar|ajuste|ajustar|retire|retira|retirar|baixa|perda)\b/.test(value)||/\b(?:entrada|saida)\b/.test(value)&&/\bestoque\b/.test(value);
  if(!isProduction&&!/\bestoque\b/.test(value)&&/\b(?:reais|pix|dinheiro|debito|credito|recebimento|despesa)\b/.test(value))return null;
  const amountMatch=value.match(/(?<!\d)(\d+(?:,\d+)?)(?:\s+|(?=[a-z]))(.+)/);
+ if(pending?.stage==='product'&&!(isProduction||isStock)){
+  const all=state.inventory||[],list=pending.candidates?.length?all.filter(p=>pending.candidates.some(id=>String(id)===String(p.id))):all;
+  let matched=findProducts(value,list);
+  if(!matched.length&&/\b(?:pilar|pilares|manilha|manilhas|tampa|tampas|bloco|blocos)\b/.test(value))matched=findProducts(value,all);
+  if(matched.length===1)return chooseOperation({...pending,productId:matched[0].id},state);
+  if(matched.length>1)return productQuestion(pending,matched);
+  if(!/^(?:quanto|quem|qual|quais|como|o que|oque|bom dia|boa tarde|boa noite|ola|oi)\b/.test(value))return productQuestion(pending,list);
+ }
  if((isProduction||isStock)&&amountMatch){
-  const prefix=value.slice(0,amountMatch.index);if(tokens(prefix).some(t=>!['adicione','adiciona','adicionar','coloca','coloque','colocar','acrescente','acrescenta','acrescentar','entrada','ajuste','ajustar','retire','retira','retirar','baixa','perda','saida','fabricamos','fabriquei','fabricar','fabricando','fabricou','produzimos','produzi','produzir','produzido','fabricacao','producao','hoje','eu','ja','mais','ola','por','favor','pode','poderia','voce','vc','preciso','gostaria','quero','que','me','tem','como'].includes(t)))return {action:'question',content:'Quantas unidades você quer registrar? Informe a quantidade antes do produto para eu não confundir com a capacidade da caixa.'};
+  const prefix=value.slice(0,amountMatch.index);if(tokens(prefix).some(t=>!['lancar','lanca','lance','lancamento','adicione','adiciona','adicionar','coloca','coloque','colocar','acrescente','acrescenta','acrescentar','entrada','ajuste','ajustar','retire','retira','retirar','baixa','perda','saida','fabricamos','fabriquei','fabricar','fabricando','fabricou','produzimos','produzi','produzir','produzido','fabricacao','producao','hoje','eu','ja','mais','ola','por','favor','pode','poderia','voce','vc','preciso','gostaria','quero','que','me','tem','como'].includes(t)))return {action:'question',content:'Quantas unidades você quer registrar? Ainda não identifiquei a quantidade; a capacidade da caixa não é a quantidade de pilares.'};
   if(/^[-−]/.test((String(message).match(/[-−+]?\d+(?:,\d+)?/)||[''])[0]))return{action:'question',content:'Informe uma quantidade positiva para a movimentação.'};
   const quantity=Number(amountMatch[1].replace(',','.'));let description=amountMatch[2].replace(/\b(?:no|ao|para o|em|do) estoque\b.*$/,'').trim();
   description=description.replace(/^(?:unidades?|pecas?)\s+(?:de\s+)?/,'');
   if(!quantity||quantity<=0)return {action:'question',content:'Qual quantidade positiva você quer registrar?'};
   const candidates=findProducts(description,state.inventory||[]);
   const base={quantity,type:/\b(?:retire|retira|retirar|baixa|perda|saida)\b/.test(value)?'saida':'entrada',mode:isProduction?'production':/\b(?:ajuste|ajustar|compra|comprei)\b/.test(value)?'stock':'ask'};
-  if(!candidates.length)return {action:'question',content:'Não encontrei um produto com essa descrição no cadastro. Pode informar o nome ou a capacidade, como pilar para caixa de 1000 litros?'};
-  if(candidates.length>1)return {action:'decision',content:'Encontrei mais de um produto. Qual deles você quer movimentar?',decision:{...base,stage:'product',candidates:candidates.map(p=>p.id)},choices:candidates.slice(0,8).map(p=>({label:p.name,value:p.name}))};
+  if(!candidates.length)return productQuestion({...base,description},[]);
+  if(candidates.length>1)return productQuestion({...base,description},candidates);
   return chooseOperation({...base,productId:candidates[0].id},state);
  }
  if(pending?.stage==='product'){

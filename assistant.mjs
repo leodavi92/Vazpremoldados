@@ -1,5 +1,5 @@
 import {queryState,summary,localDay,conversationControl,conversationHistory,recoveryMessage,validatePlan} from './assistant-core.mjs';
-import {operationalReply} from './assistant-operations.mjs';
+import {operationalReply,pendingOperation} from './assistant-operations.mjs';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let panel,root,button,messages=[],busy=false,scope='',requestController,mode='assistant';
 function user(){return typeof currentUser!=='undefined'?currentUser:null}
@@ -33,7 +33,7 @@ async function send(){
  const field=root.getElementById('message'),message=field.value.trim();if(!message)return;
  const control=conversationControl(message);
  if(control?.action==='answer'){messages.push({role:'user',content:message},{role:'assistant',content:control.content,contextBoundary:control.resetContext});field.value='';persist();notice('');render();return}
- const previous=messages.at(-1);let pendingItem=null;for(let i=messages.length-1;i>=0;i--){if(messages[i].contextBoundary)break;if(messages[i].decision&&!messages[i].used){pendingItem=messages[i];break}}const pending=pendingItem?.decision||null;
+ const previous=messages.at(-1);let pendingItem=null;for(let i=messages.length-1;i>=0;i--){if(messages[i].contextBoundary)break;if(messages[i].decision&&!messages[i].used){pendingItem=messages[i];break}}const pending=pendingItem?.decision||pendingOperation(messages,appState);
  const local=operationalReply(message,appState,{monthlyClosing:typeof computeMonthlyClosing==='function'?computeMonthlyClosing:undefined,balance:typeof saleBalance==='function'?saleBalance:undefined,deliveryState:typeof saleDeliveryState==='function'?saleDeliveryState:undefined},pending,Boolean(previous?.overview));
  if(local){if(pendingItem&&(local.decision||local.action==='draft'))pendingItem.used=true;const reply={role:'assistant',content:local.content};if(local.action==='draft'){reply.plan=local;reply.createdAt=Date.now()}if(local.decision){reply.decision=local.decision;reply.choices=local.choices}if(local.overview)reply.overview=true;messages.push({role:'user',content:message},reply);messages=messages.slice(-80);field.value='';persist();notice('');render();return}
  const api=String(window.VAZ_ASSISTANT_API||'').replace(/\/$/,'');
@@ -47,7 +47,7 @@ async function send(){
   let recovered=Boolean(recovery);
   let result=recovery?await ask(recovery,[]):control?.action==='recover'?{action:'answer',content:'Você tem razão, eu estava repetindo a pergunta. Vamos retomar: posso consultar os dados do app ou preparar um cadastro e uma movimentação. O que você quer fazer agora?'}:await ask(message,history);
   if(result.action==='question'&&!recovery){const retry=recoveryMessage(message,history,result.content);if(retry){recovered=true;result=await ask(retry,[])}}
-  if(result.action==='question'&&((recovered&&recoveryMessage(message,history,result.content))||history.some(m=>m.role==='assistant'&&m.content.trim()===result.content?.trim()))){result={action:'answer',content:'Não consegui completar esse pedido com segurança e não vou repetir a mesma pergunta. Nada foi salvo. Posso preparar o cadastro apenas com nome e telefone, ou ajudar a conferir a ficha pela Gestão manual.'}}
+  if(result.action==='question'&&((recovered&&recoveryMessage(message,history,result.content))||history.some(m=>m.role==='assistant'&&m.content.trim()===result.content?.trim()))){result={action:'answer',content:'Não consegui concluir esse pedido com segurança. Nada foi salvo. Posso retomar o pedido com as informações já enviadas ou ajudar a conferir a ficha na Gestão manual.'}}
   if(result.action==='draft'){const source=history.filter(m=>m.role==='user').map(m=>m.content).concat(message).join('\n');result=validatePlan({action:result.kind==='clients'?'client':'transaction',...result.record},source,localDay())}
   if(scope!==identity||!user()?.uid)return;
   let content=result.content,plan;

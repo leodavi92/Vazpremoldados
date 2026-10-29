@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v9-operacoes';
+const CACHE_NAME = 'app-fabrica-v10-pedido-continuo';
 const ASSETS = [
   './',
   './index.html',
