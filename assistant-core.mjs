@@ -17,8 +17,8 @@ export function norm(value) { return String(value??'').normalize('NFD').replace(
 export function inventoryMatches(description,search){const aliases={pilares:'pilar',manilhas:'manilha',tampas:'tampa',caixas:'caixa',litros:'litro',blocos:'bloco'};const words=v=>norm(v).replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(Boolean).map(w=>aliases[w]||w);const hay=words(description);return words(search).every(word=>hay.includes(word))}
 export function conversationControl(message) {
   const value=norm(message).replace(/[?!.,]/g,' ').replace(/\s+/g,' ').trim();
-  if (/^(?:o que|oq)\s+(?:(?:voce|vc|o assistente)\s+)?(?:pode|consegue)\s+(?:fazer|me ajudar)|quais (?:sao )?(?:as )?suas (?:funcoes|funcionalidades)|^como (?:voce|vc) (?:pode )?me ajuda/.test(value)) return {action:'answer',content:'Posso consultar clientes, estoque, entradas e saídas, vendas, pagamentos pendentes, entregas e produção registrada. Também preparo cadastros de clientes, lançamentos financeiros, fabricação e ajustes de estoque para você conferir e confirmar nas fichas originais. Para cadastrar um cliente, nome e telefone bastam; endereço, referência, responsável e localização são opcionais. Novas vendas, edições e exclusões continuam nas telas de Gestão manual. O que você quer fazer agora?',resetContext:false};
-  if (/^(?:cancela(?:r)?|cancele|esquece|esqueca|deixa (?:pra|para) la|pare|parar)(?:\b|$)/.test(value)) return {action:'answer',content:'Pedido cancelado. Nenhum registro foi salvo pelo assistente. O que você quer fazer agora?',resetContext:true};
+  if (/^(?:o que|oq)\s+(?:(?:voce|vc|o assistente)\s+)?(?:pode|consegue)\s+(?:fazer|me ajudar)|quais (?:sao )?(?:as )?suas (?:funcoes|funcionalidades)|^como (?:voce|vc) (?:pode )?me ajuda/.test(value)) return {action:'answer',content:'Posso consultar clientes, estoque, entradas e saídas, vendas, pagamentos pendentes, entregas e produção registrada. Posso registrar cadastros, atualizar clientes, lançar entradas e despesas, movimentar estoque, registrar fabricação, vendas, recebimentos e entregas. Primeiro mostro os dados; ao confirmar, registro no app e devolvo o identificador. Para cadastrar um cliente, nome e telefone bastam; endereço, referência, responsável e localização são opcionais. Cancelamentos exigem motivo e confirmação. Exclusões e alterações de configuração continuam na Gestão manual. O que você quer fazer agora?',resetContext:false};
+  if (/^(?:cancela(?:r)?|cancele|esquece|esqueca|deixa (?:pra|para) la|pare|parar)(?:\b|$)/.test(value)&&! /\b(?:pedido|venda)\b/.test(value)) return {action:'answer',content:'Pedido cancelado. Nenhum registro foi salvo pelo assistente. O que você quer fazer agora?',resetContext:true};
   if (/(?:repetindo|repetiu|mesma pergunta|ja (?:te )?(?:falei|respondi|informei))/.test(value)) return {action:'recover',content:'Vou aproveitar os dados que você já informou, sem repetir a mesma pergunta.'};
   return null;
 }
@@ -86,7 +86,7 @@ export function validatePlan(raw, source, today=localDay()) {
 }
 export function summary(plan) {
   if (plan.kind==='clients') { const names={name:'Cliente',responsible:'Responsável (confira)',phone:'Telefone',address:'Endereço',reference:'Referência',location:'Localização'}; return Object.entries(plan.record).map(([k,v])=>`${names[k]}: ${v}`).join('\n'); }
-  const r=plan.record; return `${r.type==='saida'?'Saída':'Entrada'}: ${money(r.amount)}\n${r.description}\n${r.paymentMethod} • ${r.date}\nConfira a conta e a categoria na tela antes de salvar.`;
+  const r=plan.record; return `${r.type==='saida'?'Saída':'Entrada'}: ${money(r.amount)}\n${r.description}\n${r.paymentMethod} • ${r.date}\nConfira a categoria e a forma de pagamento antes de registrar.`;
 }
 export function queryState(q, state, helpers={}) {
   const fields={clients:['name','responsible','phone','address','reference'],inventory:['name','code','category'],transactions:['description','category','paymentMethod'],sales:['clientName'],production:['productName']};

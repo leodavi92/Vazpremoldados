@@ -1,17 +1,19 @@
 import {queryState,summary,localDay,conversationControl,conversationHistory,recoveryMessage,validatePlan} from './assistant-core.mjs';
 import {operationalReply,pendingOperation} from './assistant-operations.mjs';
+import {executeAction,commandForPlan} from './assistant-actions.mjs';
+import {advanceOperation,answerOperation} from './assistant-planner.mjs';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let panel,root,button,messages=[],busy=false,scope='',requestController,mode='assistant';
 function user(){return typeof currentUser!=='undefined'?currentUser:null}
 function key(){return 'vaz-assistente:'+user()?.uid+':'+currentEnv}
 function load(){try{messages=JSON.parse(localStorage.getItem(key())||'[]');if(!Array.isArray(messages))messages=[]}catch{messages=[]}messages=messages.slice(-80)}
-function persist(){try{localStorage.setItem(key(),JSON.stringify(messages.slice(-80)))}catch{notice('Não consegui guardar o histórico da conversa neste aparelho.')}}
+function persist(){try{localStorage.setItem(key(),JSON.stringify(messages.slice(-80)));return true}catch{notice('Não consegui guardar o histórico da conversa neste aparelho.');return false}}
 function notice(message){if(root)root.getElementById('notice').textContent=message}
 function render(){
- const list=root.getElementById('messages');list.innerHTML=messages.length?messages.map((m,i)=>`<div class="bubble ${m.role==='user'?'mine':'theirs'}"><small>${m.role==='user'?'Você':'Assistente VAZ'}</small><div>${esc(m.content)}</div>${m.plan&&!m.used&&i===messages.length-1?'<div class="actions"><button id="prepare">Conferir no aplicativo</button><button id="cancel">Cancelar</button></div>':''}${m.decision&&!m.used&&i===messages.length-1?'<div class="actions">'+m.choices.map((c,n)=>'<button data-choice="'+n+'">'+esc(c.label)+'</button>').join('')+'</div>':''}</div>`).join(''):'<div class="welcome"><h2>Como posso ajudar?</h2><p>Consulte os dados da VAZ, tire dúvidas do app ou cole a mensagem de um cliente.</p></div>';
+ const list=root.getElementById('messages');list.innerHTML=messages.length?messages.map((m,i)=>`<div class="bubble ${m.role==='user'?'mine':'theirs'}"><small>${m.role==='user'?'Você':'Assistente VAZ'}</small><div>${esc(m.content)}</div>${m.plan&&!m.used&&i===messages.length-1?'<div class="actions"><button id="prepare">Confirmar e registrar</button>'+(['clients','transactions','stock','production'].includes(m.plan.kind)?'<button id="manual-prepare">Abrir ficha manual</button>':'')+'<button id="cancel">Cancelar</button></div>':''}${(m.decision||m.operation?.waiting)&&!m.used&&i===messages.length-1?'<div class="actions">'+m.choices.map((c,n)=>'<button data-choice="'+n+'">'+esc(c.label)+'</button>').join('')+'</div>':''}</div>`).join(''):'<div class="welcome"><h2>Como posso ajudar?</h2><p>Consulte os dados da VAZ, tire dúvidas do app ou cole a mensagem de um cliente.</p></div>';
  for(const choice of root.querySelectorAll?.('[data-choice]')||[]){choice.disabled=busy;choice.onclick=()=>{const selected=messages.at(-1)?.choices?.[Number(choice.dataset.choice)];if(selected){root.getElementById('message').value=selected.value;send()}}}
  list.scrollTop=list.scrollHeight;const send=root.getElementById('send');send.disabled=busy;send.textContent=busy?'Respondendo…':'Enviar';
- if(root.getElementById('prepare')){root.getElementById('prepare').disabled=busy;root.getElementById('prepare').onclick=prepare;root.getElementById('cancel').disabled=busy;root.getElementById('cancel').onclick=()=>{messages.at(-1).used=true;messages.push({role:'assistant',content:'Ficha cancelada. Nenhum registro foi salvo.',contextBoundary:true});persist();render()}}
+ if(root.getElementById('prepare')){root.getElementById('prepare').disabled=busy;root.getElementById('prepare').onclick=executePrepared;if(root.getElementById('manual-prepare'))root.getElementById('manual-prepare').onclick=prepare;root.getElementById('cancel').disabled=busy;root.getElementById('cancel').onclick=()=>{messages.at(-1).used=true;messages.push({role:'assistant',content:'Ficha cancelada. Nenhum registro foi salvo.',contextBoundary:true});persist();render()}}
 }
 function show(open){
  mode=open?'assistant':'manual';
@@ -33,33 +35,53 @@ async function send(){
  const field=root.getElementById('message'),message=field.value.trim();if(!message)return;
  const control=conversationControl(message);
  if(control?.action==='answer'){messages.push({role:'user',content:message},{role:'assistant',content:control.content,contextBoundary:control.resetContext});field.value='';persist();notice('');render();return}
- const previous=messages.at(-1);let pendingItem=null;for(let i=messages.length-1;i>=0;i--){if(messages[i].contextBoundary)break;if(messages[i].decision&&!messages[i].used){pendingItem=messages[i];break}}const pending=pendingItem?.decision||pendingOperation(messages,appState);
- const local=operationalReply(message,appState,{monthlyClosing:typeof computeMonthlyClosing==='function'?computeMonthlyClosing:undefined,balance:typeof saleBalance==='function'?saleBalance:undefined,deliveryState:typeof saleDeliveryState==='function'?saleDeliveryState:undefined},pending,Boolean(previous?.overview));
- if(local){if(pendingItem&&(local.decision||local.action==='draft'))pendingItem.used=true;const reply={role:'assistant',content:local.content};if(local.action==='draft'){reply.plan=local;reply.createdAt=Date.now()}if(local.decision){reply.decision=local.decision;reply.choices=local.choices}if(local.overview)reply.overview=true;messages.push({role:'user',content:message},reply);messages=messages.slice(-80);field.value='';persist();notice('');render();return}
+ const modern=typeof window!=='undefined'&&window.VAZ_ASSISTANT_PROTOCOL===2;const previous=messages.at(-1);let activeToolItem=null;for(let i=messages.length-1;i>=0;i--){if(messages[i].contextBoundary)break;if(messages[i].operation&&!messages[i].used){activeToolItem=messages[i];break}}let activeOperation=activeToolItem?.operation||null;
+ let pendingItem=null;for(let i=messages.length-1;i>=0;i--){if(messages[i].contextBoundary)break;if(messages[i].decision&&!messages[i].used){pendingItem=messages[i];break}}const pending=pendingItem?.decision||pendingOperation(messages,appState);
+ if(modern&&!activeOperation&&pending){const fields={type:pending.type||'entrada'};if(Number.isFinite(pending.quantity))fields.quantity=pending.quantity;if(pending.productId){fields.productId=pending.productId;fields.product=appState.inventory.find(p=>String(p.id)===String(pending.productId))?.name}else if(pending.description)fields.product=pending.description;activeOperation={id:crypto.randomUUID(),intent:pending.mode==='production'?'recordProduction':'adjustStock',fields,waiting:pending.stage==='origin'?'origin':pending.stage==='quantity'?'quantity':'product'}}
+ const toolAnswer=activeOperation?answerOperation(activeOperation,message,appState):null;
+ const legacyReply=operationalReply(message,appState,{monthlyClosing:typeof computeMonthlyClosing==='function'?computeMonthlyClosing:undefined,balance:typeof saleBalance==='function'?saleBalance:undefined,deliveryState:typeof saleDeliveryState==='function'?saleDeliveryState:undefined},pending,Boolean(previous?.overview));
+ const local=toolAnswer||(!modern||legacyReply?.overview?legacyReply:null);
+ if(local){if(activeToolItem&&local.operation)activeToolItem.used=true;if(pendingItem&&(local.decision||local.action==='draft'))pendingItem.used=true;const reply={role:'assistant',content:local.content};if(local.action==='draft'){reply.plan=local;reply.createdAt=Date.now()}if(local.decision){reply.decision=local.decision;reply.choices=local.choices}if(local.operation){reply.operation=local.operation;reply.choices=local.choices||[];reply.commandId=local.operation.id}if(local.overview)reply.overview=true;messages.push({role:'user',content:message},reply);messages=messages.slice(-80);field.value='';persist();notice('');render();return}
  const api=String(window.VAZ_ASSISTANT_API||'').replace(/\/$/,'');
  if(!/^https:\/\/[a-z0-9.-]+(?:\/[^?#]*)?$/i.test(api)){notice('A conexão online do assistente ainda não foi ativada. Seus dados continuam disponíveis nas telas do aplicativo.');return}
  const identity=scope,history=conversationHistory(messages);
  busy=true;notice('Preparando resposta…');render();requestController=new AbortController();const timeout=setTimeout(()=>requestController.abort(),65000);
  try{
   const token=await auth.currentUser.getIdToken();
-  const ask=async(text,context)=>{const response=await fetch(api+'/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({message:text,history:context,today:localDay()}),signal:requestController.signal});const result=await response.json();if(!response.ok)throw Error(result.error||'Não consegui responder agora.');return result};
+  const ask=async(text,context)=>{const response=await fetch(api+'/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({message:text,history:context,today:localDay(),protocol:2,activeOperation}),signal:requestController.signal});const result=await response.json();if(!response.ok)throw Error(result.error||'Não consegui responder agora.');return result};
   const recovery=control?.action==='recover'?recoveryMessage(message,history):null;
   let recovered=Boolean(recovery);
   let result=recovery?await ask(recovery,[]):control?.action==='recover'?{action:'answer',content:'Você tem razão, eu estava repetindo a pergunta. Vamos retomar: posso consultar os dados do app ou preparar um cadastro e uma movimentação. O que você quer fazer agora?'}:await ask(message,history);
+  if(result.action==='operation')result=advanceOperation({intent:result.intent,fields:result.fields},appState,activeOperation);
   if(result.action==='question'&&!recovery){const retry=recoveryMessage(message,history,result.content);if(retry){recovered=true;result=await ask(retry,[])}}
   if(result.action==='question'&&((recovered&&recoveryMessage(message,history,result.content))||history.some(m=>m.role==='assistant'&&m.content.trim()===result.content?.trim()))){result={action:'answer',content:'Não consegui concluir esse pedido com segurança. Nada foi salvo. Posso retomar o pedido com as informações já enviadas ou ajudar a conferir a ficha na Gestão manual.'}}
-  if(result.action==='draft'){const source=history.filter(m=>m.role==='user').map(m=>m.content).concat(message).join('\n');result=validatePlan({action:result.kind==='clients'?'client':'transaction',...result.record},source,localDay())}
+  if(result.action==='draft'&&!result.operation){const source=history.filter(m=>m.role==='user').map(m=>m.content).concat(message).join('\n');result=validatePlan({action:result.kind==='clients'?'client':'transaction',...result.record},source,localDay())}
   if(scope!==identity||!user()?.uid)return;
   let content=result.content,plan;
   if(result.action==='query')content=queryState(result.query,appState,{paymentState:typeof saleBalance==='function'?(s=>s.paymentStatus||(saleBalance(s)>0?'unpaid':'paid')):undefined,stockSummary:typeof stockSummary==='function'?stockSummary:undefined,deliveryState:typeof saleDeliveryState==='function'?saleDeliveryState:undefined,balance:typeof saleBalance==='function'?saleBalance:undefined});
-  if(result.action==='draft'){plan=result;content=summary(plan)+'\n\nPreparei uma ficha. Nada foi salvo. Use “Conferir no aplicativo” para revisar e confirmar na tela original.'}
+  if(result.action==='draft'){plan=result;content=result.content||summary(plan)+'\n\nConfira os dados e toque em Confirmar e registrar. Nada foi salvo ainda.'}
   if(typeof content!=='string'||!content)throw Error('Não consegui entender a resposta. Nada foi salvo.');
-  messages.push({role:'user',content:message},{role:'assistant',content,...(plan?{plan,createdAt:Date.now()}: {})});messages=messages.slice(-80);field.value='';persist();notice('');
+  messages.push({role:'user',content:message},{role:'assistant',content,...(plan?{plan,createdAt:Date.now()}: {}),...(result.operation?{operation:result.operation,choices:result.choices||[],commandId:result.operation.id}:{}),...(result.resetContext?{contextBoundary:true}:{})});messages=messages.slice(-80);field.value='';persist();notice('');
  }catch(error){if(scope===identity)notice(error.name==='AbortError'?'A resposta demorou ou a sessão mudou. Nada foi salvo. Tente novamente.':error.message)}
  finally{clearTimeout(timeout);busy=false;render()}
 }
 function set(id,value){const field=document.getElementById(id);if(field){field.value=value??'';field.dispatchEvent(new Event('input',{bubbles:true}));return true}return false}
 function select(id,value){const field=document.getElementById(id);if(!field)return;const option=[...field.options].find(o=>o.value.toLocaleLowerCase('pt-BR')===String(value).toLocaleLowerCase('pt-BR'));if(option){field.value=option.value;field.dispatchEvent(new Event('change',{bubbles:true}))}}
+async function executePrepared(){
+ const item=messages.at(-1);if(!user()?.uid||!item?.plan||item.used||busy)return;
+ if(Date.now()-item.createdAt>1800000){notice('A ficha expirou. Envie a mensagem novamente para conferir os dados.');return}
+ const identity=scope;item.commandId ||= 'cmd-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));if(!persist()){notice('Não consegui guardar o identificador deste pedido. Nenhum registro foi executado; libere espaço e tente novamente.');return}
+ busy=true;render();notice('Registrando no aplicativo…');const before=appState;
+ try{
+  const useNative=(name,args,next)=>{const previous=appState;appState=next;try{if(name==='receiveSale')registerSalePayment(args.saleId,args.amount,args.paymentMethod,args.installments,args.date);else if(name==='completeDelivery')completeDeliveryWithHelper(args.saleId,args.helperName,args.helperAmount,args.account);else if(name==='cancelSale')cancelSaleSafely(args.saleId,args.returnStock,args.reason)}finally{appState=previous}};
+  const native=Object.fromEntries(['receiveSale','completeDelivery','cancelSale'].map(name=>[name,(next,args)=>useNative(name,args,next)]));native.snapshotSaleItems=(next,items)=>{const previous=appState;appState=next;try{return snapshotSaleItems(items)}finally{appState=previous}};
+  const execution=executeAction(appState,commandForPlan(item.plan,item.commandId),{native});let synced=true;
+  if(!execution.repeated){appState=execution.state;synced=await saveData();if(typeof saveOutcome!=='undefined'&&saveOutcome==='failed'){appState=before;throw Error('Não foi possível salvar neste aparelho. Nenhum novo registro foi mantido; tente novamente.')}}
+  if(scope!==identity||!user()?.uid)return;
+  item.used=true;messages.push({role:'assistant',content:(execution.repeated?'Este pedido já foi registrado. ':'')+execution.result.message+(synced?'':'\nSalvo neste aparelho; a sincronização com a nuvem está pendente.'),contextBoundary:true});persist();render();notice('');
+  if(typeof renderContent==='function')renderContent();
+ }catch(error){if(scope===identity)notice(error.message||'Não consegui concluir o registro. Confira os dados antes de repetir.')}finally{busy=false;render()}
+}
 function prepare(){
  const item=messages.at(-1);if(!user()?.uid||!item?.plan||item.used||busy)return;
  if(Date.now()-item.createdAt>1800000){notice('A ficha expirou. Envie novamente para conferir os dados atuais.');return}

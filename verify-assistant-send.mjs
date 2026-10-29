@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import * as core from './assistant-core.mjs';
-import {operationalReply} from './assistant-operations.mjs';
+import {operationalReply,pendingOperation} from './assistant-operations.mjs';
 const nodes={};function node(id){return nodes[id]||={value:'',hidden:false,style:{},setAttribute(){},classList:{toggle(){}},innerHTML:'',textContent:'',scrollHeight:0};}
 let calls=[];
 const question='Qual é o endereço completo e a referência de Cliente Fictício Exemplo?';
 const initial='Cliente Fictício Exemplo\nPerto da praça fictícia\n(65) 99999-0000';
-const ctx={...core,operationalReply,currentUser:{uid:'fake-user'},currentEnv:'test',appState:{clients:[],transactions:[]},document:{getElementById:node},window:{VAZ_ASSISTANT_API:'https://test.workers.dev'},auth:{currentUser:{async getIdToken(){return 'fake-token'}}},localStorage:{getItem:()=>null,setItem(){}},AbortController,setTimeout,clearTimeout,console,
+const ctx={...core,operationalReply,pendingOperation,currentUser:{uid:'fake-user'},currentEnv:'test',appState:{clients:[],transactions:[]},document:{getElementById:node},window:{VAZ_ASSISTANT_API:'https://test.workers.dev'},auth:{currentUser:{async getIdToken(){return 'fake-token'}}},localStorage:{getItem:()=>null,setItem(){}},AbortController,setTimeout,clearTimeout,console,
  async fetch(url,options){const sent=JSON.parse(options.body);calls.push(sent);return{ok:true,async json(){return calls.length===1?{action:'question',content:question}:{action:'draft',kind:'clients',record:{name:'Cliente Fictício Exemplo',phone:'(65) 99999-0000',address:'Estrada Fictícia',reference:'Perto da praça fictícia'}}}}}
 };
 const code=fs.readFileSync(new URL('./assistant.mjs',import.meta.url),'utf8').replace(/^import[^\n]+\n/gm,'');vm.createContext(ctx);vm.runInContext(code.slice(0,code.indexOf("if(document.readyState==='complete')")),ctx);

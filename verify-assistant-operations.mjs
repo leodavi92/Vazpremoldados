@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import * as core from './assistant-core.mjs';
-import {factoryOverview,findProducts,operationalReply} from './assistant-operations.mjs';
+import {factoryOverview,findProducts,operationalReply,pendingOperation} from './assistant-operations.mjs';
 const day=core.localDay(),month=day.slice(0,7);
 const inventory=[{id:1,type:'final',name:"Pilar Para Caixa D'água De 1000 Litros",stock:2,minStock:1,unit:'un'},{id:2,type:'final',name:"Pilar Para Caixa D'água De 3000 Litros",stock:0,minStock:1,unit:'un'},{id:3,type:'raw',name:'Cimento',stock:20,minStock:2,unit:'saco'}];
 const state={inventory,transactions:[{type:'entrada',amount:1000,date:day},{type:'saida',amount:100,date:day},{type:'entrada',amount:999,date:'2000-01-01'}],sales:[{id:1,clientName:'Teste',status:'pending',paymentStatus:'unpaid',deliveryStatus:'scheduled',total:500,date:day}],production:[{date:day,qty:4,productName:'Produto fictício'}],clients:[]};
@@ -20,7 +20,7 @@ const stock=operationalReply('É ajuste de estoque',state,{},result.decision);as
 assert.equal(operationalReply('sim',state,{},result.decision).action,'decision');
 assert.equal(operationalReply('Fabricamos 4 pilares para caixa de 1000 litros',state).kind,'production');
 assert.equal(operationalReply('Adicione -4 pilares para caixa de 1000 litros',state).action,'question');
-assert.equal(operationalReply('Adicione pilares para caixa de 1000 litros',state).action,'question');
+assert.equal(operationalReply('Adicione pilares para caixa de 1000 litros',state).decision.stage,'quantity');
 assert.equal(operationalReply('Retire 9 pilares para caixa de 1000 litros',state).action,'answer');
 assert.equal(operationalReply('Saída combustível 100 reais pago no Pix',state),null);
 assert.equal(operationalReply('Adicione entrada de 100 reais no Pix',state),null);
@@ -29,7 +29,7 @@ assert.equal(operationalReply(input,{...state,inventory:[...inventory,{...invent
 assert.equal(JSON.stringify(state),before,'Preparar a operação não pode mudar os registros.');
 let opened=[];const nodes={'modal-backdrop':{classList:{contains:()=>true}},notice:{textContent:''}};
 function field(id,values=[]){return nodes[id]={value:'',options:values.map(value=>({value})),dispatchEvent(){}}}
-const ctx={...core,operationalReply,currentUser:{uid:'ficticio'},currentEnv:'test',appState:structuredClone(state),localStorage:{setItem(){}},Date,Event:class{},document:{getElementById:id=>nodes[id]},console,
+const ctx={...core,operationalReply,pendingOperation,currentUser:{uid:'ficticio'},currentEnv:'test',appState:structuredClone(state),localStorage:{setItem(){}},Date,Event:class{},document:{getElementById:id=>nodes[id]},console,
  openProductionModal(id,qty){opened.push(['production',id,qty])},
  openStockMovementModal(){opened.push(['stock']);field('sm-prod',['1','2','3']);field('sm-type',['entrada','saida']);field('sm-qty');nodes['sm-gen-expense']={checked:true}}
 };

@@ -38,16 +38,19 @@ export function operationDraft(pending,kind,state){
  if(kind==='production'&&product.type!=='final')return {action:'question',content:'A fabricação exige um produto acabado. Para esse material posso preparar uma entrada de estoque.'};
  if(kind==='stock'&&pending.type==='saida'&&pending.quantity>Math.max(0,Number(product.stock)))return {action:'answer',content:`O saldo disponível de ${product.name} é ${Number(product.stock)} ${product.unit||''}. A saída de ${pending.quantity} não pode ser preparada com esse saldo.`};
  const record={productId:product.id,productName:product.name,quantity:pending.quantity,type:pending.type||'entrada',date:localDay()};
- return {action:'draft',kind,record,content:kind==='production'?`Fabricação: ${record.quantity} ${product.unit||'un'} de ${product.name}.\nVou abrir a ficha de produção com o consumo de materiais da receita. Confira e confirme na tela; nada foi salvo ainda.`:`${record.type==='entrada'?'Entrada/ajuste':'Saída/ajuste'}: ${record.quantity} ${product.unit||'un'} de ${product.name}.\nVou abrir a ficha de estoque. Esse ajuste não registra fabricação nem consome materiais. Confira e confirme; nada foi salvo ainda.`};
+ return {action:'draft',kind,record,content:kind==='production'?`Fabricação: ${record.quantity} ${product.unit||'un'} de ${product.name}.\nConfira e confirme para registrar a produção e o consumo dos materiais da receita. Nada foi salvo ainda.`:`${record.type==='entrada'?'Entrada/ajuste':'Saída/ajuste'}: ${record.quantity} ${product.unit||'un'} de ${product.name}.\nEsse ajuste não registra fabricação nem consome materiais. Confira e confirme para registrar; nada foi salvo ainda.`};
 }
 function chooseOperation(pending,state){
  const product=(state.inventory||[]).find(p=>String(p.id)===String(pending.productId));
  if(!product)return {action:'question',content:'Não encontrei esse produto no cadastro atual.'};
+ if(!Number.isFinite(pending.quantity)||pending.quantity<=0)return {action:'decision',content:`Produto identificado: ${product.name}. Quantas unidades você quer ${pending.mode==='production'?'registrar como fabricadas':'lançar'}?`,decision:{...pending,stage:'quantity'},choices:[]};
  if(pending.mode==='production')return operationDraft(pending,'production',state);
  if(pending.mode==='stock'||pending.type==='saida'||product.type!=='final')return operationDraft(pending,'stock',state);
  return {action:'decision',content:`Encontrei ${product.name}. Para adicionar ${pending.quantity} ${product.unit||'un'}, qual foi a origem?\n\nFabricação: aumenta o produto e consome os materiais da receita.\nAjuste/entrada: corrige ou acrescenta o saldo sem registrar fabricação.\n\nNenhum registro foi salvo.`,decision:{...pending,stage:'origin'},choices:[{label:'Foi fabricação',value:'Foi fabricação'},{label:'É ajuste de estoque',value:'É ajuste de estoque'}]};
 }
-function productQuestion(pending,candidates){return {action:'decision',content:`Tenho a quantidade: ${pending.quantity} ${pending.quantity===1?'unidade':'unidades'}${pending.mode==='production'?' fabricadas':''}. ${candidates.length?'Qual produto/capacidade você quer registrar?':'Ainda não encontrei o produto. Qual é o nome ou a capacidade?'} Não precisa repetir a quantidade.`,decision:{...pending,stage:'product',candidates:candidates.map(p=>p.id)},choices:candidates.slice(0,8).map(p=>({label:p.name,value:p.name}))}}
+function productQuestion(pending,candidates){return {action:'decision',content:`${Number.isFinite(pending.quantity)?`Tenho a quantidade: ${pending.quantity} ${pending.quantity===1?'unidade':'unidades'}${pending.mode==='production'?' fabricadas':''}. `:'Consigo registrar no app. '}${candidates.length?'Qual produto/capacidade você quer registrar?':'Qual é o nome ou a capacidade do produto?'}${Number.isFinite(pending.quantity)?' Não precisa repetir a quantidade.':''}`,decision:{...pending,stage:'product',candidates:candidates.map(p=>p.id)},choices:candidates.slice(0,8).map(p=>({label:p.name,value:p.name}))}}
+const intentWords=new Set(['lancar','lanca','lance','lancamento','adicione','adiciona','adicionar','coloca','coloque','colocar','acrescente','acrescenta','acrescentar','entrada','ajuste','ajustar','retire','retira','retirar','baixa','perda','saida','fabricamos','fabriquei','fabricar','fabricando','fabricou','produzimos','produzi','produzir','produzido','fabricacao','producao','eu','ja','mais','ola','por','favor','pode','poderia','voce','vc','preciso','gostaria','quero','que','me','tem','como','consegue']);
+function withoutQuantity(value,state,mode,type){const description=tokens(value).filter(t=>!intentWords.has(t)).join(' ');const candidates=description?findProducts(description,state.inventory||[]):(state.inventory||[]).filter(p=>mode!=='production'||p.type==='final');const base={mode,type,description,quantity:null};return candidates.length===1&&description?chooseOperation({...base,productId:candidates[0].id},state):productQuestion(base,candidates)}
 export function pendingOperation(messages,state){
  for(let i=messages.length-1;i>=0;i--){const entry=messages[i];if(entry.contextBoundary)break;if(entry.role!=='user')continue;
   if(!/\b(?:fabri|produz|lanc|adicion|coloc|acrescent|ajust|retir|baixa|perda)/.test(clean(entry.content)))continue;
@@ -72,6 +75,12 @@ export function operationalReply(message,state,helpers={},pending=null,previousO
  const isStock=/\b(?:lancar|lanca|lance|lancamento|adicione|adiciona|adicionar|coloca|coloque|colocar|acrescente|acrescenta|acrescentar|ajuste|ajustar|retire|retira|retirar|baixa|perda)\b/.test(value)||/\b(?:entrada|saida)\b/.test(value)&&/\bestoque\b/.test(value);
  if(!isProduction&&!/\bestoque\b/.test(value)&&/\b(?:reais|pix|dinheiro|debito|credito|recebimento|despesa)\b/.test(value))return null;
  const amountMatch=value.match(/(?<!\d)(\d+(?:,\d+)?)(?:\s+|(?=[a-z]))(.+)/);
+ if(pending?.stage==='quantity'&&!(isProduction||isStock)){
+  const words={um:1,uma:1,dois:2,duas:2,tres:3,quatro:4,cinco:5,seis:6,sete:7,oito:8,nove:9,dez:10};const answer=value.replace(/^(?:sao|foram|a quantidade e|quantidade)\s+/,'');const found=answer.match(/^(-?\d+(?:,\d+)?|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)(?:\s+(.*))?$/);
+  if(found&&!/\b(?:litro|litros)\b/.test(found[2]||'')){const qty=words[found[1]]??Number(found[1].replace(',','.'));if(Number.isFinite(qty)&&qty>0)return chooseOperation({...pending,quantity:qty},state)}
+  if(/^(?:sim|pode|ok|vc consegue|voce consegue|consegue|quanto|qual quantidade)$/.test(value)||found)return chooseOperation(pending,state);
+ }
+ if(pending&&/^(?:(?:vc|voce)\s+)?(?:consegue|pode)(?: mesmo)?$/.test(value))return pending.stage==='product'?productQuestion(pending,(state.inventory||[]).filter(p=>!pending.candidates?.length||pending.candidates.some(id=>String(id)===String(p.id)))):chooseOperation(pending,state);
  if(pending?.stage==='product'&&!(isProduction||isStock)){
   const all=state.inventory||[],list=pending.candidates?.length?all.filter(p=>pending.candidates.some(id=>String(id)===String(p.id))):all;
   let matched=findProducts(value,list);
@@ -81,7 +90,7 @@ export function operationalReply(message,state,helpers={},pending=null,previousO
   if(!/^(?:quanto|quem|qual|quais|como|o que|oque|bom dia|boa tarde|boa noite|ola|oi)\b/.test(value))return productQuestion(pending,list);
  }
  if((isProduction||isStock)&&amountMatch){
-  const prefix=value.slice(0,amountMatch.index);if(tokens(prefix).some(t=>!['lancar','lanca','lance','lancamento','adicione','adiciona','adicionar','coloca','coloque','colocar','acrescente','acrescenta','acrescentar','entrada','ajuste','ajustar','retire','retira','retirar','baixa','perda','saida','fabricamos','fabriquei','fabricar','fabricando','fabricou','produzimos','produzi','produzir','produzido','fabricacao','producao','hoje','eu','ja','mais','ola','por','favor','pode','poderia','voce','vc','preciso','gostaria','quero','que','me','tem','como'].includes(t)))return {action:'question',content:'Quantas unidades você quer registrar? Ainda não identifiquei a quantidade; a capacidade da caixa não é a quantidade de pilares.'};
+  const prefix=value.slice(0,amountMatch.index);if(tokens(prefix).some(t=>!intentWords.has(t)))return withoutQuantity(value,state,isProduction?'production':'ask','entrada');
   if(/^[-−]/.test((String(message).match(/[-−+]?\d+(?:,\d+)?/)||[''])[0]))return{action:'question',content:'Informe uma quantidade positiva para a movimentação.'};
   const quantity=Number(amountMatch[1].replace(',','.'));let description=amountMatch[2].replace(/\b(?:no|ao|para o|em|do) estoque\b.*$/,'').trim();
   description=description.replace(/^(?:unidades?|pecas?)\s+(?:de\s+)?/,'');
@@ -92,6 +101,7 @@ export function operationalReply(message,state,helpers={},pending=null,previousO
   if(candidates.length>1)return productQuestion({...base,description},candidates);
   return chooseOperation({...base,productId:candidates[0].id},state);
  }
+ if((isProduction||isStock)&&!amountMatch&&!pending)return withoutQuantity(value,state,isProduction?'production':'ask',/\b(?:retire|retira|retirar|baixa|perda|saida)\b/.test(value)?'saida':'entrada');
  if(pending?.stage==='product'){
   const list=(state.inventory||[]).filter(p=>pending.candidates.some(id=>String(id)===String(p.id)));
   const chosen=list.filter(p=>clean(p.name)===value);if(chosen.length===1)return chooseOperation({...pending,productId:chosen[0].id},state);

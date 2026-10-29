@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v10-pedido-continuo';
+const CACHE_NAME = 'app-fabrica-v11-acoes';
 const ASSETS = [
   './',
   './index.html',
@@ -7,6 +7,8 @@ const ASSETS = [
   './assistant.mjs',
   './assistant-core.mjs',
   './assistant-operations.mjs',
+  './assistant-actions.mjs',
+  './assistant-planner.mjs',
   './manifest.webmanifest',
   './app-icon.svg'
 ];
