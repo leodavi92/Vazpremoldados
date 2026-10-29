@@ -62,6 +62,10 @@ export function pendingOperation(messages,state){
 }
 export function operationalReply(message,state,helpers={},pending=null,previousOverview=false){
  const value=clean(message);
+ const lastMonth=/mes passado|mes anterior/.test(value);const d=new Date();if(lastMonth)d.setMonth(d.getMonth()-1,1);const reportMonth=localDay(d).slice(0,7);
+ if(/resultado|balanco|balancado/.test(value)&&!/estoque|lanc|registr/.test(value))return {action:'answer',content:factoryOverview(state,helpers,reportMonth),overview:true};
+ if(/\bvendas?\b/.test(value)&&/quantas|quanto|resumo|resumido|esse mes|este mes|mes passado/.test(value)&&!/aument|melhor|registr|lanc/.test(value))return {action:'query',query:{dataset:'sales',dateFrom:reportMonth+'-01',dateTo:localDay(new Date(d.getFullYear(),d.getMonth()+1,0)),summary:true}};
+
  if(/\bbalanco\b|\bpanorama\b|\bresumo (?:da |de )?(?:fabrica|empresa|operacao)\b|como (?:esta|vai|anda).*(?:fabrica|empresa)/.test(value)||previousOverview&&/(?:o\s*que|oque|onde).*(?:precisa|ajuda|ajusta|melhora)/.test(value)){
   const raw=norm(message),match=raw.match(/(\d{4})-(0[1-9]|1[0-2])/);const month=match?match[0]:localDay().slice(0,7);let day='';
   const explicit=raw.match(/\b\d{4}-\d{2}-\d{2}\b/);if(explicit){const parsed=new Date(explicit[0]+'T12:00:00');if(Number.isNaN(parsed.getTime())||localDay(parsed)!==explicit[0])return{action:'question',content:'Essa data não é válida. Qual dia você quer consultar?'};day=explicit[0]}

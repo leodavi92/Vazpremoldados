@@ -95,7 +95,7 @@ export function queryState(q, state, helpers={}) {
     let hay=fields[q.dataset].map(k=>r[k]||'').join(' ');
     if(q.dataset==='sales') hay+=' '+(r.items||[]).map(i=>i.name||'').join(' ');
     if(q.search&&!(q.dataset==='inventory'?inventoryMatches(hay,q.search):norm(hay).includes(norm(q.search))))return false;
-    let day=String((q.filter==='undelivered'?r.deliveryDate:r.date)||'').slice(0,10);
+    let day=String((q.filter==='undelivered'?r.deliveryDate:q.dataset==='sales'?(r.orderDate||r.date):r.date)||'').slice(0,10);
     if((q.dateFrom&&day<q.dateFrom)||(q.dateTo&&(!day||day>q.dateTo)))return false;
     if(['entrada','saida'].includes(q.filter)&&r.type!==q.filter)return false;
     if(q.filter==='low_stock'&&Number(r.stock)>Number(r.minStock||0))return false;
@@ -111,8 +111,15 @@ export function queryState(q, state, helpers={}) {
     const cents=type=>rows.filter(r=>r.type===type).reduce((s,r)=>s+Math.round(Number(r.amount||0)*100),0);
     const incoming=cents('entrada'),outgoing=cents('saida');lines.push(`Entradas: ${money(incoming/100)}`,`Saídas: ${money(outgoing/100)}`,`Diferença: ${money((incoming-outgoing)/100)}`,'Somente estes lançamentos, sem saldo inicial. Não representa lucro.');
   }
+  if(q.dataset==='sales') {
+    const cancelled=rows.filter(r=>['cancelled','canceled'].includes(r.status)||['cancelled','canceled'].includes(r.deliveryStatus));
+    const valid=rows.filter(r=>!cancelled.includes(r));
+    const total=valid.reduce((n,r)=>n+Math.round(Number(r.total||0)*100),0)/100;
+    lines.push(`Vendas válidas: ${valid.length}`,`Valor das vendas válidas: ${money(total)}`,`Pedidos cancelados: ${cancelled.length}`,`Registros com pagamento reembolsado: ${rows.filter(r=>r.paymentStatus==='refunded').length}`,'Valor vendido não representa dinheiro recebido nem lucro.');
+  }
+  if(q.summary)return lines.join('\n');
   rows.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  const labels={paid:'pago',pending:'pendente',partial:'parcial',unpaid:'não pago',delivered:'entregue',scheduled:'agendada',completed:'concluída'};
+  const labels={paid:'pago',pending:'pendente',partial:'parcial',unpaid:'não pago',delivered:'entregue',scheduled:'agendada',completed:'concluída',cancelled:'cancelado',canceled:'cancelado',refunded:'reembolsado'};
   for(const r of rows.slice(0,25)) {
     if(q.dataset==='clients')lines.push(['name','responsible','phone','address','reference'].map(k=>r[k]).filter(Boolean).join(' • '));
     else if(q.dataset==='inventory') { const extra=helpers.stockSummary?.(r); lines.push(`${r.name}: saldo ${Number(r.stock||0).toLocaleString('pt-BR')} ${r.unit||''}${extra?` • disponível ${extra.available} • reservado ${extra.reserved} • falta produzir ${extra.toProduce}`:''}`); }

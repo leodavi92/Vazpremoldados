@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v11-acoes';
+const CACHE_NAME = 'app-fabrica-v12-resumos';
 const ASSETS = [
   './',
   './index.html',
@@ -64,3 +64,4 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+

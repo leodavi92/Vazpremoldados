@@ -33,6 +33,8 @@ function refresh(){
 async function send(){
  if(busy)return;refresh();if(!user()?.uid)return;
  const field=root.getElementById('message'),message=field.value.trim();if(!message)return;
+ const previousQuery=messages.at(-1)?.query;
+ if(previousQuery&&/resum|detalh|listar|lista completa/i.test(message)){const q={...previousQuery,summary:!/detalh|listar|lista completa/i.test(message)};messages.push({role:'user',content:message},{role:'assistant',query:q,content:queryState(q,appState)});field.value='';persist();notice('');render();return}
  const control=conversationControl(message);
  if(control?.action==='answer'){messages.push({role:'user',content:message},{role:'assistant',content:control.content,contextBoundary:control.resetContext});field.value='';persist();notice('');render();return}
  const modern=typeof window!=='undefined'&&window.VAZ_ASSISTANT_PROTOCOL===2;const previous=messages.at(-1);let activeToolItem=null;for(let i=messages.length-1;i>=0;i--){if(messages[i].contextBoundary)break;if(messages[i].operation&&!messages[i].used){activeToolItem=messages[i];break}}let activeOperation=activeToolItem?.operation||null;
@@ -40,8 +42,8 @@ async function send(){
  if(modern&&!activeOperation&&pending){const fields={type:pending.type||'entrada'};if(Number.isFinite(pending.quantity))fields.quantity=pending.quantity;if(pending.productId){fields.productId=pending.productId;fields.product=appState.inventory.find(p=>String(p.id)===String(pending.productId))?.name}else if(pending.description)fields.product=pending.description;activeOperation={id:crypto.randomUUID(),intent:pending.mode==='production'?'recordProduction':'adjustStock',fields,waiting:pending.stage==='origin'?'origin':pending.stage==='quantity'?'quantity':'product'}}
  const toolAnswer=activeOperation?answerOperation(activeOperation,message,appState):null;
  const legacyReply=operationalReply(message,appState,{monthlyClosing:typeof computeMonthlyClosing==='function'?computeMonthlyClosing:undefined,balance:typeof saleBalance==='function'?saleBalance:undefined,deliveryState:typeof saleDeliveryState==='function'?saleDeliveryState:undefined},pending,Boolean(previous?.overview));
- const local=toolAnswer||(!modern||legacyReply?.overview?legacyReply:null);
- if(local){if(activeToolItem&&local.operation)activeToolItem.used=true;if(pendingItem&&(local.decision||local.action==='draft'))pendingItem.used=true;const reply={role:'assistant',content:local.content};if(local.action==='draft'){reply.plan=local;reply.createdAt=Date.now()}if(local.decision){reply.decision=local.decision;reply.choices=local.choices}if(local.operation){reply.operation=local.operation;reply.choices=local.choices||[];reply.commandId=local.operation.id}if(local.overview)reply.overview=true;messages.push({role:'user',content:message},reply);messages=messages.slice(-80);field.value='';persist();notice('');render();return}
+ const local=toolAnswer||(!modern||legacyReply?.overview||legacyReply?.action==='query'?legacyReply:null);
+ if(local){if(activeToolItem&&local.operation)activeToolItem.used=true;if(pendingItem&&(local.decision||local.action==='draft'))pendingItem.used=true;const reply={role:'assistant',content:local.action==='query'?queryState(local.query,appState):local.content};if(local.query)reply.query=local.query;if(local.action==='draft'){reply.plan=local;reply.createdAt=Date.now()}if(local.decision){reply.decision=local.decision;reply.choices=local.choices}if(local.operation){reply.operation=local.operation;reply.choices=local.choices||[];reply.commandId=local.operation.id}if(local.overview)reply.overview=true;messages.push({role:'user',content:message},reply);messages=messages.slice(-80);field.value='';persist();notice('');render();return}
  const api=String(window.VAZ_ASSISTANT_API||'').replace(/\/$/,'');
  if(!/^https:\/\/[a-z0-9.-]+(?:\/[^?#]*)?$/i.test(api)){notice('A conexão online do assistente ainda não foi ativada. Seus dados continuam disponíveis nas telas do aplicativo.');return}
  const identity=scope,history=conversationHistory(messages);
@@ -58,10 +60,10 @@ async function send(){
   if(result.action==='draft'&&!result.operation){const source=history.filter(m=>m.role==='user').map(m=>m.content).concat(message).join('\n');result=validatePlan({action:result.kind==='clients'?'client':'transaction',...result.record},source,localDay())}
   if(scope!==identity||!user()?.uid)return;
   let content=result.content,plan;
-  if(result.action==='query')content=queryState(result.query,appState,{paymentState:typeof saleBalance==='function'?(s=>s.paymentStatus||(saleBalance(s)>0?'unpaid':'paid')):undefined,stockSummary:typeof stockSummary==='function'?stockSummary:undefined,deliveryState:typeof saleDeliveryState==='function'?saleDeliveryState:undefined,balance:typeof saleBalance==='function'?saleBalance:undefined});
+  if(result.action==='query'){result.query.summary=!/detalh|liste|listar|lista completa/i.test(message);content=queryState(result.query,appState,{paymentState:typeof saleBalance==='function'?(s=>s.paymentStatus||(saleBalance(s)>0?'unpaid':'paid')):undefined,stockSummary:typeof stockSummary==='function'?stockSummary:undefined,deliveryState:typeof saleDeliveryState==='function'?saleDeliveryState:undefined,balance:typeof saleBalance==='function'?saleBalance:undefined});}
   if(result.action==='draft'){plan=result;content=result.content||summary(plan)+'\n\nConfira os dados e toque em Confirmar e registrar. Nada foi salvo ainda.'}
   if(typeof content!=='string'||!content)throw Error('Não consegui entender a resposta. Nada foi salvo.');
-  messages.push({role:'user',content:message},{role:'assistant',content,...(plan?{plan,createdAt:Date.now()}: {}),...(result.operation?{operation:result.operation,choices:result.choices||[],commandId:result.operation.id}:{}),...(result.resetContext?{contextBoundary:true}:{})});messages=messages.slice(-80);field.value='';persist();notice('');
+  messages.push({role:'user',content:message},{role:'assistant',content,...(result.query?{query:result.query}:{}),...(plan?{plan,createdAt:Date.now()}: {}),...(result.operation?{operation:result.operation,choices:result.choices||[],commandId:result.operation.id}:{}),...(result.resetContext?{contextBoundary:true}:{})});messages=messages.slice(-80);field.value='';persist();notice('');
  }catch(error){if(scope===identity)notice(error.name==='AbortError'?'A resposta demorou ou a sessão mudou. Nada foi salvo. Tente novamente.':error.message)}
  finally{clearTimeout(timeout);busy=false;render()}
 }
