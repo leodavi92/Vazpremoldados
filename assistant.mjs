@@ -1,4 +1,4 @@
-import {queryState,summary,localDay} from './assistant-core.mjs';
+import {queryState,summary,localDay,conversationControl,conversationHistory,recoveryMessage,validatePlan} from './assistant-core.mjs';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let panel,root,button,messages=[],busy=false,scope='',requestController,mode='assistant';
 function user(){return typeof currentUser!=='undefined'?currentUser:null}
@@ -9,7 +9,7 @@ function notice(message){if(root)root.getElementById('notice').textContent=messa
 function render(){
  const list=root.getElementById('messages');list.innerHTML=messages.length?messages.map((m,i)=>`<div class="bubble ${m.role==='user'?'mine':'theirs'}"><small>${m.role==='user'?'Você':'Assistente VAZ'}</small><div>${esc(m.content)}</div>${m.plan&&!m.used&&i===messages.length-1?'<div class="actions"><button id="prepare">Conferir no aplicativo</button><button id="cancel">Cancelar</button></div>':''}</div>`).join(''):'<div class="welcome"><h2>Como posso ajudar?</h2><p>Consulte os dados da VAZ, tire dúvidas do app ou cole a mensagem de um cliente.</p></div>';
  list.scrollTop=list.scrollHeight;const send=root.getElementById('send');send.disabled=busy;send.textContent=busy?'Respondendo…':'Enviar';
- if(root.getElementById('prepare')){root.getElementById('prepare').disabled=busy;root.getElementById('prepare').onclick=prepare;root.getElementById('cancel').disabled=busy;root.getElementById('cancel').onclick=()=>{messages.at(-1).used=true;messages.push({role:'assistant',content:'Ficha cancelada. Nenhum registro foi salvo.'});persist();render()}}
+ if(root.getElementById('prepare')){root.getElementById('prepare').disabled=busy;root.getElementById('prepare').onclick=prepare;root.getElementById('cancel').disabled=busy;root.getElementById('cancel').onclick=()=>{messages.at(-1).used=true;messages.push({role:'assistant',content:'Ficha cancelada. Nenhum registro foi salvo.',contextBoundary:true});persist();render()}}
 }
 function show(open){
  mode=open?'assistant':'manual';
@@ -29,14 +29,21 @@ function refresh(){
 async function send(){
  if(busy)return;refresh();if(!user()?.uid)return;
  const field=root.getElementById('message'),message=field.value.trim();if(!message)return;
+ const control=conversationControl(message);
+ if(control?.action==='answer'){messages.push({role:'user',content:message},{role:'assistant',content:control.content,contextBoundary:control.resetContext});field.value='';persist();notice('');render();return}
  const api=String(window.VAZ_ASSISTANT_API||'').replace(/\/$/,'');
  if(!/^https:\/\/[a-z0-9.-]+(?:\/[^?#]*)?$/i.test(api)){notice('A conexão online do assistente ainda não foi ativada. Seus dados continuam disponíveis nas telas do aplicativo.');return}
- const identity=scope,history=messages.slice(-8).map(m=>({role:m.role,content:m.content.slice(0,1500)}));
+ const identity=scope,history=conversationHistory(messages);
  busy=true;notice('Preparando resposta…');render();requestController=new AbortController();const timeout=setTimeout(()=>requestController.abort(),65000);
  try{
   const token=await auth.currentUser.getIdToken();
-  const response=await fetch(api+'/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({message,history,today:localDay()}),signal:requestController.signal});
-  const result=await response.json();if(!response.ok)throw Error(result.error||'Não consegui responder agora.');
+  const ask=async(text,context)=>{const response=await fetch(api+'/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({message:text,history:context,today:localDay()}),signal:requestController.signal});const result=await response.json();if(!response.ok)throw Error(result.error||'Não consegui responder agora.');return result};
+  const recovery=control?.action==='recover'?recoveryMessage(message,history):null;
+  let recovered=Boolean(recovery);
+  let result=recovery?await ask(recovery,[]):control?.action==='recover'?{action:'answer',content:'Você tem razão, eu estava repetindo a pergunta. Vamos retomar: posso consultar os dados do app ou preparar um cadastro e uma movimentação. O que você quer fazer agora?'}:await ask(message,history);
+  if(result.action==='question'&&!recovery){const retry=recoveryMessage(message,history,result.content);if(retry){recovered=true;result=await ask(retry,[])}}
+  if(result.action==='question'&&((recovered&&recoveryMessage(message,history,result.content))||history.some(m=>m.role==='assistant'&&m.content.trim()===result.content?.trim()))){result={action:'answer',content:'Não consegui completar esse pedido com segurança e não vou repetir a mesma pergunta. Nada foi salvo. Posso preparar o cadastro apenas com nome e telefone, ou ajudar a conferir a ficha pela Gestão manual.'}}
+  if(result.action==='draft'){const source=history.filter(m=>m.role==='user').map(m=>m.content).concat(message).join('\n');result=validatePlan({action:result.kind==='clients'?'client':'transaction',...result.record},source,localDay())}
   if(scope!==identity||!user()?.uid)return;
   let content=result.content,plan;
   if(result.action==='query')content=queryState(result.query,appState,{paymentState:typeof saleBalance==='function'?(s=>s.paymentStatus||(saleBalance(s)>0?'unpaid':'paid')):undefined,stockSummary:typeof stockSummary==='function'?stockSummary:undefined,deliveryState:typeof saleDeliveryState==='function'?saleDeliveryState:undefined,balance:typeof saleBalance==='function'?saleBalance:undefined});
@@ -63,7 +70,7 @@ function prepare(){
    openTransactionModal(r.type);set('t-desc',r.description);set('t-amount',r.amount);set('t-date',r.date);select('t-cat',r.category);select('t-method',r.paymentMethod);
    const method=document.getElementById('t-method');if(method&&method.value.toLowerCase()!==r.paymentMethod.toLowerCase()){const option=document.createElement('option');option.value=r.paymentMethod;option.textContent=r.paymentMethod;method.appendChild(option);method.value=r.paymentMethod}
   }else throw Error('Tipo de registro não reconhecido.');
-  item.used=true;messages.push({role:'assistant',content:'Abri a ficha preenchida no aplicativo. Confira os campos e use o botão de confirmação da própria tela. Abrir a ficha ainda não salva o registro.'});persist();show(false);
+  item.used=true;messages.push({role:'assistant',content:'Abri a ficha preenchida no aplicativo. Confira os campos e use o botão de confirmação da própria tela. Abrir a ficha ainda não salva o registro.',contextBoundary:true});persist();show(false);
  }catch(error){notice(error.message)}
 }
 function mount(){
