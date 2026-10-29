@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v15-apagar-conversas';
+const CACHE_NAME = 'app-fabrica-v16-material';
 const ASSETS = [
   './',
   './index.html',

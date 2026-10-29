@@ -16,7 +16,8 @@ const id=()=>globalThis.crypto?.randomUUID?.()||Date.now()+'-'+Math.random().toS
 export function advanceOperation(patch,state,previous=null){
  const intent=patch.intent||previous?.intent;if(!kinds[intent])throw Error('Ação não reconhecida.');
  const compatible=previous&&(previous.intent===intent||['adjustStock','recordProduction'].includes(previous.intent)&&['adjustStock','recordProduction'].includes(intent));
- const op=compatible?structuredClone(previous):{id:id(),intent,fields:{}};op.intent=intent;
+ const changedProduct=previous?.fields.productId&&patch.fields?.product&&clean(patch.fields.product)!==clean(previous.fields.product)&&String(patch.fields.productId)!==String(previous.fields.productId);
+ const op=compatible&&!changedProduct?structuredClone(previous):{id:id(),intent,fields:{}};op.intent=intent;
  if(patch.fields?.product&&clean(patch.fields.product)!==clean(op.fields.product)&&!patch.fields.productId)delete op.fields.productId;
  if(patch.fields?.client&&clean(patch.fields.client)!==clean(op.fields.client)&&!patch.fields.clientId){delete op.fields.clientId;if(!patch.fields.saleId)delete op.fields.saleId}
  for(const [key,value] of Object.entries(patch.fields||{}))if(value!==undefined&&value!==null&&value!=='')op.fields[key]=value;
@@ -77,12 +78,24 @@ export function advanceOperation(patch,state,previous=null){
  f.date ||= localDay();if(['recordTransaction','receiveSale','completeDelivery','createSale'].includes(intent))f.account ||= (state.accounts||[])[0];
  const names={createClient:'Cadastrar cliente',updateClient:'Atualizar cliente',recordTransaction:'Registrar movimentação',adjustStock:'Ajustar estoque',recordProduction:'Registrar fabricação',createSale:'Registrar venda',receiveSale:'Receber pedido',completeDelivery:'Confirmar entrega',cancelSale:'CANCELAR PEDIDO'};
  const labels={name:'Nome',phone:'Telefone',address:'Endereço',reference:'Referência',responsible:'Responsável',product:'Produto',quantity:'Quantidade',client:'Cliente',saleId:'Pedido',amount:'Valor',total:'Total',received:'Recebido',paymentMethod:'Pagamento',account:'Conta',category:'Categoria',type:'Movimento',origin:'Origem',date:'Data',deliveryStatus:'Entrega',deliveryDate:'Data da entrega',deliveryTime:'Horário',reason:'Motivo',returnStock:'Devolver ao estoque',helperAmount:'Custo de ajudante',helperName:'Ajudante',description:'Descrição'};
- const content=names[intent]+'\n'+Object.entries(f).filter(([key])=>labels[key]).map(([key,value])=>`${labels[key]}: ${typeof value==='boolean'?(value?'sim':'não'):value}`).join('\n')+'\n\nConfira e confirme para registrar. Nada foi salvo ainda.';
+ const content=names[intent]+'\n'+Object.entries(f).filter(([key])=>labels[key]).map(([key,value])=>`${labels[key]}: ${typeof value==='boolean'?(value?'sim':'não'):key==='origin'?({production:'Fabricação',adjustment:'Ajuste/entrada'}[value]||value):value}`).join('\n')+'\n\nConfira e confirme para registrar. Nada foi salvo ainda.';
  return{action:'draft',kind:kinds[intent],record:f,operation:{...op,waiting:null},content};
 }
 
 export function answerOperation(operation,message,state){
- if(!operation?.waiting)return null;const field=operation.waiting,value=message.trim(),n=clean(value);let parsed;
+ if(!operation)return null;const value=message.trim(),n=clean(value);
+ if(['adjustStock','recordProduction'].includes(operation.intent)&&/\b(?:adicione|adiciona|adicionar|coloque|coloca|lance|lancar|entrada)\b/.test(n)&&/\b(?:material|materia prima|barras?|ferro|cimento|areia|brita)\b/.test(n)){
+  const match=n.match(/\b(\d+(?:[.,]\d+)?|um|uma|dois|duas)\s+(?:barras?|unidades?|sacos?|quilos?|kg|de|do|da|nesse|neste|desse)/);const words={um:1,uma:1,dois:2,duas:2};const quantity=match?(words[match[1]]??Number(match[1].replace(',','.'))):undefined;
+  let candidates=[];
+  if(/(?:material|que).*(?:falt|insuficiente)/.test(n)){
+   const source=(state.inventory||[]).find(p=>String(p.id)===String(operation.fields.productId));const required=new Map();for(const item of source?.recipe||[])required.set(String(item.productId),(required.get(String(item.productId))||0)+Number(item.qty)*Number(operation.fields.quantity||0));
+   candidates=(state.inventory||[]).filter(p=>required.has(String(p.id))&&Number(p.stock)<required.get(String(p.id)));
+  }
+  const fields={type:'entrada',origin:'adjustment',...(quantity?{quantity}:{})};
+  if(candidates.length===1){fields.productId=candidates[0].id;fields.product=candidates[0].name}
+  const result=advanceOperation({intent:'adjustStock',fields},state);if(candidates.length!==1&&result.operation?.waiting==='product'){result.content='Qual material você quer adicionar?'+(quantity?' Já tenho a quantidade: '+quantity+'.':'')+' A fabricação anterior não foi registrada.';const materials=(state.inventory||[]).filter(p=>p.type!=='final');result.choices=(candidates.length?candidates:materials).slice(0,10).map(p=>({label:p.name,value:p.name}))}return result;
+ }
+ if(!operation.waiting)return null;const field=operation.waiting;let parsed;
  if(['quantity','amount','total','received','installments','helperAmount'].includes(field)){
   const words={um:1,uma:1,dois:2,duas:2,tres:3,quatro:4,cinco:5,seis:6,sete:7,oito:8,nove:9,dez:10};const found=n.match(/^(?:r\$\s*)?(\d+(?:[.,]\d+)?|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)(?:\s*(?:reais|unidades?|pilares?|pecas?))?$/);
   if(found)parsed=words[found[1]]??Number(found[1].replace(',','.'));else if(field==='helperAmount'&&/sem custo|sem ajudante|nao houve|nenhum/.test(n))parsed=0;else return null;
