@@ -62,6 +62,9 @@ export function pendingOperation(messages,state){
 }
 export function operationalReply(message,state,helpers={},pending=null,previousOverview=false){
  const value=clean(message);
+ if(/^(?:como esta|como ta|qual|quanto|quais|mostr|ver |consul)/.test(value)&&/estoque/.test(value)&&!/lanc|adicion|fabric|registr|retir/.test(value))return{action:'query',query:{dataset:'inventory',filter:/baixo|minimo/.test(value)?'low_stock':'',summary:false}};
+ if(/^(?:quanto|qual|mostr|ver |consul)/.test(value)&&/entrou|saiu|entradas|saidas/.test(value)&&/hoje|ontem/.test(value)){const date=new Date();if(/ontem/.test(value))date.setDate(date.getDate()-1);const day=localDay(date);return{action:'query',query:{dataset:'transactions',filter:/saiu|saidas/.test(value)?'saida':'entrada',dateFrom:day,dateTo:day,summary:true}};}
+
  const lastMonth=/mes passado|mes anterior/.test(value);const d=new Date();if(lastMonth)d.setMonth(d.getMonth()-1,1);const reportMonth=localDay(d).slice(0,7);
  if(/resultado|balanco|balancado/.test(value)&&!/estoque|lanc|registr/.test(value))return {action:'answer',content:factoryOverview(state,helpers,reportMonth),overview:true};
  if(/\bvendas?\b/.test(value)&&/quantas|quanto|resumo|resumido|esse mes|este mes|mes passado/.test(value)&&!/aument|melhor|registr|lanc/.test(value))return {action:'query',query:{dataset:'sales',dateFrom:reportMonth+'-01',dateTo:localDay(new Date(d.getFullYear(),d.getMonth()+1,0)),summary:true}};

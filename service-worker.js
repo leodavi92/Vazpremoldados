@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v13-conversas';
+const CACHE_NAME = 'app-fabrica-v14-economia';
 const ASSETS = [
   './',
   './index.html',
@@ -64,5 +64,3 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
-
-
