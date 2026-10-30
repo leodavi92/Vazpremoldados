@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v19-seletor';
+const CACHE_NAME = 'app-fabrica-v20-cliente-whatsapp';
 const ASSETS = [
   './',
   './index.html',

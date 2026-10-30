@@ -47,6 +47,7 @@ export function advanceOperation(patch,state,previous=null){
   sale=list.find(s=>String(s.id)===String(f.saleId));if(!sale)return ask('saleId','Não encontrei esse pedido disponível. Qual é o pedido correto?');f.client=sale.clientName;
  }
  if(intent==='createClient'){
+  if(f.name&&(/\n|\[\d{1,2}\/\d{1,2}|\b(?:rua|avenida|contato|telefone)\b/i.test(f.name)||/\d{4}/.test(f.name)))delete f.name;
   if(!f.name)return ask('name','Qual é o nome do cliente ou da empresa?');
   if(!/\(?\d{2}\)?[\s-]*\d{4,5}[\s-]?\d{4}/.test(f.phone||''))return ask('phone',`Qual o telefone de ${f.name}, com DDD?`);
  }
@@ -83,6 +84,20 @@ export function advanceOperation(patch,state,previous=null){
  return{action:'draft',kind:kinds[intent],record:f,operation:{...op,waiting:null},content};
 }
 
+export function parseWhatsAppClient(message,state,previous=null){
+ if(!/^\s*\[\d{1,2}\/\d{1,2}(?:\/\d{2,4})?,\s*\d{1,2}:\d{2}[^\]]*\]\s*[^:\n]+:/m.test(message))return null;
+ const plain=message.replace(/^\s*\[\d{1,2}\/\d{1,2}(?:\/\d{2,4})?,\s*\d{1,2}:\d{2}[^\]]*\]\s*[^:\n]+:\s*/gm,'').trim();
+ const phone=plain.match(/(?:\+?55[\s-]*)?\(?\d{2}\)?[\s-]*\d{4,5}[\s-]?\d{4}(?!\d)/);
+ const lines=plain.split('\n').map(l=>l.trim()).filter(l=>l&&!/^(?:contato|telefone|fone|celular)\b/i.test(l));
+ const first=lines[0]||'';const street=first.match(/,\s*((?:rua|r\.|avenida|av\.|estrada|rodovia|travessa|alameda)\b.*)$/i);
+ let name=street?first.slice(0,street.index).trim():(!/[,;:]|\d/.test(first)?first:'');
+ const fields={...(phone?{phone:phone[0]}:{}),...(name?{name}:{})};
+ if(street){const address=street[1];const reference=address.match(/,\s*((?:pr[oó]xim[oa]|perto|refer[eê]ncia|em frente|ao lado)\b.*)$/i);fields.address=(reference?address.slice(0,reference.index):address).trim();if(reference)fields.reference=reference[1].trim()}
+ const result=advanceOperation({intent:'createClient',fields},state);result.operation.localOnly=true;
+ if(result.operation?.waiting==='name')result.content='Qual é o nome do cliente? Ignorei data, hora e remetente do WhatsApp; o telefone já foi separado quando presente.';
+ return result;
+}
+
 export function answerOperation(operation,message,state){
  if(!operation)return null;const value=message.trim(),n=clean(value);
  if(['adjustStock','recordProduction'].includes(operation.intent)&&/\b(?:adicione|adiciona|adicionar|coloque|coloca|lance|lancar|entrada)\b/.test(n)&&/\b(?:material|materia prima|barras?|ferro|cimento|areia|brita)\b/.test(n)){
@@ -101,6 +116,15 @@ export function answerOperation(operation,message,state){
   if(products.length){const fields={...operation.fields,product:value};delete fields.productId;if(products.length===1){fields.product=products[0].name;fields.productId=products[0].id}return advanceOperation({intent:operation.intent,fields},state)}
  }
  if(!operation.waiting)return null;const field=operation.waiting;let parsed;
+ // Only a simple answer may fill one client field locally; compound messages and corrections need the model.
+ if(['createClient','updateClient'].includes(operation.intent)&&['name','phone','address','reference','responsible','location','email','taxId'].includes(field)){
+  if(/\n|\[\d{1,2}\/\d{1,2}|\b(?:nao|corrig|errad|troqu|mude|na verdade|o nome|nome correto)\b/.test(n))return null;
+  const phone=value.match(/(?:\+?55[\s-]*)?\(?\d{2}\)?[\s-]*\d{4,5}[\s-]?\d{4}(?!\d)/);
+  if(field==='phone'){if(!phone||value.replace(phone[0],'').replace(/^(?:contato|telefone|celular|fone)\s*:?\s*/i,'').trim())return null;return advanceOperation({intent:operation.intent,fields:{phone:phone[0]}},state,operation)}
+  if(field==='name'&&(phone||/[,;:]|\d|\b(?:rua|avenida|estrada|proximo|referencia|endereco|responsavel|contato)\b/.test(n)))return null;
+  if(field!=='name'&&(phone||/[,;]|\b(?:nome|telefone|contato|responsavel|endereco)\s*:/.test(n)))return null;
+ }
+
  if(['quantity','amount','total','received','installments','helperAmount'].includes(field)){
   const words={um:1,uma:1,dois:2,duas:2,tres:3,quatro:4,cinco:5,seis:6,sete:7,oito:8,nove:9,dez:10};const found=n.match(/^(?:r\$\s*)?(\d+(?:[.,]\d+)?|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)(?:\s*(?:reais|unidades?|pilares?|pecas?))?$/);
   if(found)parsed=words[found[1]]??Number(found[1].replace(',','.'));else if(field==='helperAmount'&&/sem custo|sem ajudante|nao houve|nenhum/.test(n))parsed=0;else return null;

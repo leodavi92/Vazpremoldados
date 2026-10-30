@@ -26,7 +26,7 @@ const phonePattern=/(?:\+?55[\s-]*)?\(?\d{2}\)?[\s-]*\d{4,5}[\s-]?\d{4}(?!\d)/;
 export function conversationHistory(messages) {
   let start=0;
   for(let i=messages.length-1;i>=0;i--){if(messages[i].contextBoundary){start=i+1;break}}
-  const entries=messages.slice(start).filter(m=>['user','assistant'].includes(m.role)&&typeof m.content==='string');
+  const entries=messages.slice(start).filter(m=>!m.localOnly&&['user','assistant'].includes(m.role)&&typeof m.content==='string');
   if(entries.length<=8)return entries.map(m=>({role:m.role,content:m.content.slice(0,1500)}));
   const contactIndex=entries.findLastIndex(m=>m.role==='user'&&phonePattern.test(m.content));
   const anchor=contactIndex>=0?entries[contactIndex]:entries.find(m=>m.role==='user');
