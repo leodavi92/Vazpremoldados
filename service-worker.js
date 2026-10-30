@@ -1,4 +1,4 @@
-const CACHE_NAME = 'app-fabrica-v20-cliente-whatsapp';
+const CACHE_NAME = 'app-fabrica-v21-formulario-whatsapp';
 const ASSETS = [
   './',
   './index.html',

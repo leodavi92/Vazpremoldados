@@ -93,6 +93,10 @@ export function parseWhatsAppClient(message,state,previous=null){
  let name=street?first.slice(0,street.index).trim():(!/[,;:]|\d/.test(first)?first:'');
  const fields={...(phone?{phone:phone[0]}:{}),...(name?{name}:{})};
  if(street){const address=street[1];const reference=address.match(/,\s*((?:pr[oó]xim[oa]|perto|refer[eê]ncia|em frente|ao lado)\b.*)$/i);fields.address=(reference?address.slice(0,reference.index):address).trim();if(reference)fields.reference=reference[1].trim()}
+ const labels={name:/^nome(?: completo)?\s*:/,address:/^endereco(?: completo)?\s*:/,reference:/^(?:ponto de referencia|referencia)\s*:/,location:/^localizacao\s*:/,phone:/^(?:telefones?(?: para contatos?)?|contatos?|celular)\s*:/,skip:/^video\b/};
+ const sections={};let section=null,hasLabels=false;
+ for(const raw of plain.split('\n')){const line=raw.replace(/^[\s•\-–]+/,'').replace(/\*/g,'').trim();if(!line)continue;const normalized=norm(line);const label=Object.entries(labels).find(([,pattern])=>pattern.test(normalized));if(label){hasLabels=true;section=label[0];sections[section]||=[];const inline=line.includes(':')?line.slice(line.indexOf(':')+1).trim():'';if(inline)sections[section].push(inline);continue}if(section&&section!=='skip'&&!/\?|^(?:quais|qual|como|quanto|obrigad|bom dia|boa tarde|boa noite)\b/.test(normalized))sections[section].push(line)}
+ if(hasLabels){for(const key of ['name','address','reference','location','phone'])delete fields[key];for(const key of ['name','address','reference']){const text=sections[key]?.join(' ').trim();if(text)fields[key]=text}const contact=sections.phone?.join(' ').match(/(?:\+?55[\s-]*)?\(?\d{2}\)?[\s-]*\d{4,5}[\s-]?\d{4}(?!\d)/);if(contact)fields.phone=contact[0];const location=sections.location?.join(' ').trim();if(location&&/^https?:\/\//i.test(location))fields.location=location;}
  const result=advanceOperation({intent:'createClient',fields},state);result.operation.localOnly=true;
  if(result.operation?.waiting==='name')result.content='Qual é o nome do cliente? Ignorei data, hora e remetente do WhatsApp; o telefone já foi separado quando presente.';
  return result;
